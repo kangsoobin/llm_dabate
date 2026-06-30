@@ -1,0 +1,27 @@
+# ============================================================
+#  LLM Debate 시스템 — 모델 및 생성 파라미터 설정
+# ============================================================
+
+# HuggingFace 모델 ID (첫 실행 시 ~29 GB 자동 다운로드)
+model_id: "Qwen/Qwen2.5-14B-Instruct"
+
+# GPU 할당 (0-based index)
+left_gpu: 0    # 🔵 LEFT agent (이진영 교수, 진보)
+right_gpu: 1   # 🔴 RIGHT agent (박민준 교수, 보수)
+
+# 양자화 방식: "4bit" | "8bit" | "fp16"
+# 4bit: ~9 GB VRAM, 속도 빠름  (권장)
+# 8bit: ~14 GB VRAM, 품질 약간 우수
+# fp16: ~28 GB VRAM, 최고 품질 (RTX 3090 24GB 초과로 불가)
+quantization: "4bit"
+
+# ── SFT LoRA 어댑터 경로 ────────────────────────────────────
+# SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
+left_adapter:  "adapters/left"
+right_adapter: "adapters/right"
+
+# ── 텍스트 생성 파라미터 ────────────────────────────────────
+max_new_tokens: 600       # 응답 최대 토큰 수
+temperature: 0.8          # 다양성 (높을수록 창의적, 낮을수록 일관적)
+top_p: 0.9                # nucleus sampling
+repetition_penalty: 1.05  # 반복 억제 (1.0=없음, 높을수록 강함)
