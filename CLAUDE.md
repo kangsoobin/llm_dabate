@@ -69,6 +69,20 @@ The system loads **Qwen2.5-14B-Instruct** twice (4-bit NF4 quantization), pinnin
 | `debate.py` | Terminal entry point — interactive loop with `l`/`r`/`q`/`vram`/`reset` commands |
 | `config/model.yaml` | Model ID, GPU assignment, quantization mode, generation params |
 | `config/prompts.yaml` | Korean-language system prompts for both personas |
+| `sft/generate_data.py`, `sft/train.py` | Self-generated QLoRA SFT pipeline — persona weight internalization |
+| `rl/simulate.py` | Multi-round self-play transcript generation for GRPO rollouts |
+| `rl/rollout.py` | Converts transcripts into a turn-level `datasets.Dataset` for `GRPOTrainer` |
+| `rl/rewards/` | Pluggable reward components — `v1_pdf.py` (보상 설계.pdf original) vs `v2_redesign.py` (`docs/reward_design_v2.md`), selected via `config/reward.yaml` |
+| `rl/train_grpo.py` | GRPO training entry point (TRL `GRPOTrainer`, LoRA continued from SFT adapter) |
+| `config/reward.yaml` | Reward version (`v1`/`v2`), component weights, judge backend (`none`/`local`/`api`) |
+
+### GRPO / reward design
+
+See `docs/reward_design_v2.md` for the full reward redesign rationale (paper citations, problem→reward mapping against the mid-conference slide's MAD failure-mode table). Key points:
+
+- Two reward versions coexist: `v1` = `보상 설계.pdf` original (성향/반박품질/반복패널티, judge required), `v2` = redesigned (persona-consistency/engagement/diversity/novelty/grounding, judge-optional). Switch with `rl/train_grpo.py --reward-version v1|v2`.
+- Judge model (`rl/rewards/judge.py`) is an interface only — `LocalJudge` (Qwen2.5-7B on a spare GPU) and `APIJudge` (Anthropic/OpenAI) are both implemented but neither has been run yet; pick one on the actual GPU server via `config/reward.yaml` `judge.backend`.
+- GRPO rollouts are real multi-round self-play (`rl/simulate.py` reuses `core.session.DebateSession._build_message` for opponent injection) flattened to turn-level training rows — not single-turn Q&A.
 
 ### Personas
 

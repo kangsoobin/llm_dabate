@@ -142,3 +142,74 @@ python debate.py  # 동일 주제 10라운드 → logs/sft_*.json 저장
 - LoRA rank: `r=256`은 논문에서 벤치마크 성능 하락 관측 → **r=64가 안전한 기본값**
 - 어댑터는 `adapters/` 에 저장되므로 재훈련 없이 재사용 가능
 - `peft` 패키지 미설치 시 `adapter_path=null`이면 정상 동작 (어댑터 없이 스킵)
+
+---
+
+## Phase 2 — GRPO 파이프라인 (구현 완료, 실행은 GPU 서버에서 진행 예정)
+
+### 배경 및 목적
+
+SFT만으로는 "페르소나 유지"는 되지만 "라운드를 거치며 좋은 토론이 되는가"(반박 품질, 다양성 유지,
+동조 방지)는 보상되지 않는다. `보상 설계.pdf`(강수빈)가 GRPO 기반 보상의 원안을 제시했고,
+이를 최근 MAD 실패 유형 논문들과 중간발표 슬라이드의 문제-해결 매핑에 맞춰 재검토·재설계한
+문서가 `docs/reward_design_v2.md`다. 두 설계 모두 코드로 구현했고 `config/reward.yaml`의
+`version`(또는 `--reward-version` CLI 플래그)으로 즉시 전환할 수 있다.
+
+### 구성 요소
+
+| 파일 | 역할 |
+|---|---|
+| `rl/rewards/base.py` | 보상 계산에 필요한 턴 컨텍스트(`DebateTurnSample`) 정의 |
+| `rl/rewards/utils.py` | judge 없이 쓰는 Jaccard/key-point/임베딩 유틸 |
+| `rl/rewards/judge.py` | 외부 Judge 인터페이스 — `LocalJudge`(로컬 7B), `APIJudge`(Anthropic/OpenAI) |
+| `rl/rewards/v1_pdf.py` | `보상 설계.pdf` 원안 (성향/반박품질/반복패널티) |
+| `rl/rewards/v2_redesign.py` | `docs/reward_design_v2.md` 재설계 (페르소나 일관성/참여도/다양성/반복억제/근거충실도) |
+| `rl/rewards/composer.py` | 가중합 + TRL `GRPOTrainer` 연동용 `reward_func` 어댑터 |
+| `rl/simulate.py` | LEFT/RIGHT 자기 대국(self-play)으로 멀티라운드 트랜스크립트 생성 |
+| `rl/rollout.py` | 트랜스크립트 → 턴 단위 GRPO 학습 데이터셋 변환 |
+| `rl/build_anchor.py` | R_persona용 페르소나 기준점(anchor) 텍스트 생성 |
+| `rl/train_grpo.py` | GRPO 학습 진입점 (SFT 어댑터를 이어받아 LoRA 계속 학습) |
+| `config/reward.yaml` | 보상 버전/가중치/judge backend 설정 |
+
+### 실행 순서 (GPU 서버에서)
+
+```bash
+conda activate debate
+pip install "trl>=0.24" peft datasets sentence-transformers
+# API judge를 쓸 경우: pip install anthropic  (또는 openai)
+
+# 1. SFT 어댑터가 이미 있어야 함 (Phase 1 선행)
+
+# 2. self-play 트랜스크립트 생성
+python rl/simulate.py --left-adapter adapters/left --right-adapter adapters/right \
+    --n-topics 40 --rounds-per-topic 3 --out rl/data/transcripts.jsonl
+
+# 3. (v2 사용 시) R_persona anchor 텍스트 생성 → config/reward.yaml에 반영
+python rl/build_anchor.py --side left
+python rl/build_anchor.py --side right
+
+# 4. judge 필요 여부 결정: config/reward.yaml의 judge.backend를 none/local/api 중 선택
+#    (v1은 judge 필수, v2는 judge 없이도 동작)
+
+# 5. GRPO 학습 (side별 순차 실행 — VRAM 공유)
+python rl/train_grpo.py --side left  --reward-version v2
+python rl/train_grpo.py --side right --reward-version v2
+
+# 6. config/model.yaml 에서 left_adapter/right_adapter를 adapters/{side}_grpo 로 교체
+```
+
+### 설계 근거
+
+- `docs/reward_design_v2.md` §1~§4: 왜 재설계했는지, 논문 근거, 보상 수식, GRPO 목적함수.
+- `docs/reward_design_v2.md` §5: 이번 보상 설계로 다루지 않는 것(Judge Ceiling 근본 해결, Belief
+  Entrenchment, Tyranny of Majority) — 각각 왜 범위 밖인지 명시.
+- v1/v2 모두 같은 `DebateTurnSample` 인터페이스를 구현하므로 side별로 다른 버전을 실험하거나,
+  가중치만 바꿔가며 ablation 하는 것도 `config/reward.yaml` 수정만으로 가능하다.
+
+### 주의사항
+
+- `rl/simulate.py`, `rl/train_grpo.py` 모두 LEFT/RIGHT 14B 모델 로딩이 필요해 GPU 서버 전용.
+- judge를 `local`로 쓰면 3번째 GPU(또는 여유 VRAM)가 필요 — 3090 24GB 두 장은 이미 LEFT/RIGHT로
+  가득 차 있음 (`CLAUDE.md` 참고).
+- `R_grounding`은 근거 검색(RAG) 파이프라인이 없어 기본 가중치 0 — 활성화하려면 `DebateTurnSample.evidence`를
+  채워주는 검색 단계와 NLI 스코어러를 먼저 붙여야 함.
