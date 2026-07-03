@@ -35,7 +35,9 @@ bash install_env.sh
 
 ## Architecture Overview
 
-The system loads **Qwen2.5-14B-Instruct** twice (4-bit NF4 quantization), pinning one instance per GPU. Two personas debate policy topics with the user acting as moderator.
+The system loads **Kanana-2-30B-A3B-Instruct** (Kakao, `kakaocorp/kanana-2-30b-a3b-instruct`) twice (4-bit NF4 quantization), pinning one instance per GPU. Two personas debate policy topics with the user acting as moderator.
+
+**Model swap (2026-07-02):** switched from Qwen2.5-14B-Instruct to Kanana-2-30B-A3B-Instruct for a more current, Korean-tuned model. Kanana's architecture is `DeepseekV3ForCausalLM` (MLA attention + MoE, 128 routed + 2 shared experts) — requires `transformers>=4.51.0`. This is a different module layout than Qwen's dense attention, so `sft/train.py`'s LoRA `target_modules` are now auto-discovered at runtime (`discover_lora_target_modules`) instead of hardcoded — see `sft/train.py` docstring. The previously-trained Qwen adapters (`adapters/left`, `adapters/right`) cannot be loaded onto Kanana (`config/model.yaml`'s `left_adapter`/`right_adapter` are `null` until SFT is redone); the SFT training **data** (`sft/data/*.jsonl`) is architecture-agnostic and was reused as-is.
 
 ### Data flow
 
@@ -99,4 +101,4 @@ Edit `config/model.yaml` to change model, GPU assignment, quantization (`4bit`/`
 
 - **Shell version specifiers:** Never write unquoted `>=X.Y.Z` in bash scripts — bash interprets `>` as stdout redirection and creates artifact files named `=X.Y.Z`. Always quote: `"transformers>=4.45.0"`.
 - **Debate logs** are saved to `logs/debate_YYYYMMDD_HHMMSS.json` when `q` is entered in terminal mode.
-- First run downloads ~29 GB of model weights from HuggingFace.
+- First run downloads Kanana-2-30B-A3B weights from HuggingFace (much larger than the old Qwen2.5-14B ~29 GB — 30B total params in bf16 is roughly 60 GB before quantization).

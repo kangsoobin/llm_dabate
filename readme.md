@@ -19,22 +19,31 @@ UI 동작 방식
 새로운 주제	🔄 버튼 → session_state + agent history 모두 초기화
 
 
-Phase 1 — SFT 파이프라인 (완료)
+Phase 1 — SFT 파이프라인
+
+> **2026-07-02 모델 교체:** base model을 Qwen2.5-14B-Instruct → **Kanana-2-30B-A3B-Instruct**
+> (카카오, 최신 한국어 모델, `transformers>=4.51.0` 필요)로 변경. 이전에 학습해둔 Qwen 기반
+> `adapters/left`, `adapters/right`는 아키텍처가 달라(DeepseekV3ForCausalLM, MLA+MoE) 새 모델에
+> 로드할 수 없으므로 **SFT를 처음부터 다시 해야 함**. 다만 `sft/data/{left,right}_train.jsonl`
+> (팀원 공유분, 페르소나 프롬프트+응답 텍스트)은 모델과 무관해 그대로 재사용 — `generate_data.py`를
+> 다시 돌릴 필요 없이 `sft/train.py`만 재실행하면 됨. `sft/train.py`의 LoRA `target_modules`는
+> 하드코딩 대신 로드된 모델을 순회해 자동 탐색하도록 바뀌었다 (MoE 모듈 이름이 Qwen과 다름).
 
 sft/questions.yaml: 시드 질문 10개 (경제·노동·환경·안보·사회)
 sft/generate_data.py: 질문당 20회 응답 생성 → JSONL 저장
-sft/train.py: QLoRA (r=64) + SFTTrainer 1 epoch → adapters/{side}/ 저장
+sft/train.py: QLoRA + SFTTrainer 1 epoch → adapters/{side}/ 저장 (LoRA 대상 모듈 자동 탐색)
 agents/base_agent.py: adapter_path 파라미터 추가, load() 끝에 PeftModel 조건부 적용
-config/model.yaml: left_adapter / right_adapter 항목 추가 (기본 null)
-SFT 실행 순서:
+config/model.yaml: left_adapter / right_adapter 항목 추가 (Kanana 재학습 전까지 null)
+SFT 실행 순서 (Kanana, 데이터 재사용):
 
 
-pip install peft trl datasets
-python sft/generate_data.py --side left    # ~2~3시간
-python sft/generate_data.py --side right   # ~2~3시간
-python sft/train.py --side left            # ~10분
-python sft/train.py --side right           # ~10분
+pip install "transformers>=4.51.0" peft trl datasets
+# sft/data/left_train.jsonl, right_train.jsonl 은 팀원 공유분 재사용 (이미 sft/data/에 있음)
+python sft/train.py --side left
+python sft/train.py --side right
 # model.yaml에서 left_adapter/right_adapter 경로 활성화 후 기존대로 실행
+
+(처음부터 새 질문/데이터로 다시 만들고 싶다면 기존대로 generate_data.py부터: 아래 "실행 순서" 참고)
 
 ---
 

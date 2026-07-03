@@ -2,23 +2,30 @@
 #  LLM Debate 시스템 — 모델 및 생성 파라미터 설정
 # ============================================================
 
-# HuggingFace 모델 ID (첫 실행 시 ~29 GB 자동 다운로드)
-model_id: "Qwen/Qwen2.5-14B-Instruct"
+# HuggingFace 모델 ID
+# 2026-07-02: Qwen2.5-14B-Instruct(구 모델) → Kanana-2-30B-A3B-Instruct(카카오, 한국어 최신 모델)로 교체.
+# 아키텍처가 DeepseekV3ForCausalLM(MLA + MoE, 128 routed + 2 shared experts)로 Qwen과 완전히 다르므로
+# transformers>=4.51.0 필요. 기존 Qwen 기반 adapters/left, adapters/right는 이 모델에 로드할 수 없다
+# (아래 left_adapter/right_adapter가 null인 이유 — sft/train.py로 재학습 필요, 학습 데이터는 재사용 가능).
+model_id: "kakaocorp/kanana-2-30b-a3b-instruct"
 
 # GPU 할당 (0-based index)
 left_gpu: 0    # 🔵 LEFT agent (이진영 교수, 진보)
 right_gpu: 1   # 🔴 RIGHT agent (박민준 교수, 보수)
 
 # 양자화 방식: "4bit" | "8bit" | "fp16"
-# 4bit: ~9 GB VRAM, 속도 빠름  (권장)
-# 8bit: ~14 GB VRAM, 품질 약간 우수
-# fp16: ~28 GB VRAM, 최고 품질 (RTX 3090 24GB 초과로 불가)
+# Kanana-2-30B-A3B는 총 30B 파라미터(MoE, 활성 파라미터는 3B) — 4bit(NF4) 기준 가중치만 약 16GB.
+# 3090 24GB 한 장에 inference는 들어가지만, QLoRA 학습 시 옵티마이저 상태·활성화 메모리가 더해지므로
+# 이전 14B 대비 여유가 훨씬 빠듯하다. OOM 시 sft/train.py의 --gpu 옵션으로 여유 GPU를 배정하거나
+# gradient_checkpointing/배치 크기를 더 낮출 것.
+# 8bit/fp16은 30B 규모에서 24GB 한 장에 들어가지 않으므로 현재 사용 불가.
 quantization: "4bit"
 
 # ── SFT LoRA 어댑터 경로 ────────────────────────────────────
 # SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
-left_adapter:  "adapters/left"
-right_adapter: "adapters/right"
+# Kanana 기준 재학습 전까지는 null 유지 (Qwen용 기존 adapters/는 구조가 달라 로드 불가).
+left_adapter:  null
+right_adapter: null
 
 # ── 텍스트 생성 파라미터 ────────────────────────────────────
 max_new_tokens: 600       # 응답 최대 토큰 수
