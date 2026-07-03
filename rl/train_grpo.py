@@ -151,9 +151,10 @@ def train(
         learning_rate=1e-5,
         beta=0.04,              # KL 페널티 계수 β (docs/reward_design_v2.md §4)
         epsilon=0.2,            # 클리핑 ε
-        # 프롬프트 = [system(페르소나 ~600토큰)] + 라운드별 히스토리 — 3라운드 기준 2048로는
-        # 잘려서 system 프롬프트 앞부분이 날아갈 수 있어 3072로 상향.
-        max_prompt_length=3072,
+        # TRL 1.7은 max_prompt_length(프롬프트 잘라내기)가 없다 — 컨텍스트 상한은 vLLM 쪽
+        # max_model_len으로 관리한다. 프롬프트 = [system(페르소나)] + 라운드별 히스토리라
+        # 3라운드 기준 최대 ~4천 토큰까지 자랄 수 있으니, trl vllm-serve의 --max_model_len을
+        # "데이터셋 최대 프롬프트 + max_completion_length" 이상으로 띄울 것 (HANDOFF.md §3).
         max_completion_length=model_cfg.get("max_new_tokens", 600),
         temperature=model_cfg.get("temperature", 0.8),
         bf16=True,
