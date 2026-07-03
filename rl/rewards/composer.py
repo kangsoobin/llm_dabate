@@ -51,11 +51,15 @@ class RewardComposer:
             return completion[0]["content"]
         return completion
 
-    def as_trl_reward_fn(self):
+    def as_trl_reward_fn(self, log_components: bool = True):
         """
         TRL GRPOTrainer의 reward_funcs에 넘길 콜러블을 만든다.
         rl/rollout.py가 만드는 데이터셋에는 side/question/opponent_response/own_history/
         round_num/evidence 컬럼이 있어야 한다 (GRPOTrainer가 자동으로 kwargs에 실어 전달).
+
+        log_components=True면 TRL 1.7이 kwargs로 넘겨주는 log_metric 훅으로 컴포넌트별
+        raw 평균값을 `reward_components/<name>`으로 로깅한다 — 특정 컴포넌트만 오르고
+        나머지가 무너지는 reward hacking을 학습 중에 조기 발견하기 위함.
         """
 
         def reward_fn(prompts, completions, **kwargs) -> list[float]:
@@ -65,8 +69,10 @@ class RewardComposer:
             histories = kwargs["own_history"]
             rounds = kwargs.get("round_num", [1] * len(completions))
             evidences = kwargs.get("evidence", [None] * len(completions))
+            log_metric = kwargs.get("log_metric") if log_components else None
 
             scores = []
+            component_sums: dict[str, float] = {}
             for i, completion in enumerate(completions):
                 sample = DebateTurnSample(
                     response=self._completion_text(completion),
@@ -77,7 +83,16 @@ class RewardComposer:
                     round_num=rounds[i],
                     evidence=evidences[i],
                 )
-                scores.append(self.score(sample))
+                total = 0.0
+                for component, weight in self.components:
+                    raw = component(sample)
+                    total += weight * raw
+                    component_sums[component.name] = component_sums.get(component.name, 0.0) + raw
+                scores.append(total)
+
+            if log_metric is not None and completions:
+                for name, sum_val in component_sums.items():
+                    log_metric(f"reward_components/{name}", sum_val / len(completions))
             return scores
 
         return reward_fn

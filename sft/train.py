@@ -91,51 +91,6 @@ def discover_lora_target_modules(model, include_routed_experts: bool = False) ->
 
 
 # ────────────────────────────────────────────────────────────
-# transformers 4.57.6 DeepSeek-V3 MoE dtype 버그 런타임 패치
-# ────────────────────────────────────────────────────────────
-
-def _patch_deepseek_v3_moe_dtype_bug() -> None:
-    """
-    transformers의 DeepseekV3MoE.moe()가
-    `final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)`로 dtype을
-    hidden_states가 아니라 router 출력(topk_weights)의 dtype에 맞춰 만든다. 그런데 개별 expert의
-    출력(expert_output * expert_weights)이 실제로는 다른 dtype으로 나올 수 있어(4bit 양자화 +
-    gradient checkpointing 조합에서 관찰됨) `index_add_(): self와 source의 scalar type이 달라야 한다`는
-    RuntimeError로 학습 첫 스텝에서 죽는다. 코드 자체에 "CALL FOR CONTRIBUTION! I don't have time to
-    optimise this right now"라는 주석이 달려있을 만큼 다듬어지지 않은 부분 — 라이브러리 업스트림 수정을
-    기다리는 대신, 이 함수를 원래 hidden_states dtype으로 고정하고 index_add_ 직전에 명시적으로 dtype을
-    맞춰주는 버전으로 런타임에 교체한다. site-packages 파일을 직접 고치면 재설치 시 사라지므로, 여기서
-    모델 로드 전에 몽키패치한다.
-    """
-    try:
-        from transformers.models.deepseek_v3 import modeling_deepseek_v3 as _dsv3
-    except ImportError:
-        return
-
-    def _fixed_moe(self, hidden_states, topk_indices, topk_weights):
-        final_hidden_states = torch.zeros_like(hidden_states)
-        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
-        expert_mask = expert_mask.permute(2, 0, 1)
-
-        for expert_idx in range(len(self.experts)):
-            expert = self.experts[expert_idx]
-            mask = expert_mask[expert_idx]
-            token_indices, weight_indices = torch.where(mask)
-
-            if token_indices.numel() > 0:
-                expert_weights = topk_weights[token_indices, weight_indices]
-                expert_input = hidden_states[token_indices]
-                expert_output = expert(expert_input)
-                weighted_output = (expert_output * expert_weights.unsqueeze(-1)).to(final_hidden_states.dtype)
-                final_hidden_states.index_add_(0, token_indices, weighted_output)
-
-        return final_hidden_states.type(hidden_states.dtype)
-
-    _dsv3.DeepseekV3MoE.moe = _fixed_moe
-    print("  [패치] transformers DeepseekV3MoE.moe() dtype 버그 런타임 패치 적용됨")
-
-
-# ────────────────────────────────────────────────────────────
 # 훈련 메인
 # ────────────────────────────────────────────────────────────
 
@@ -155,7 +110,9 @@ def train(
     )
     from trl import SFTTrainer, SFTConfig
 
-    _patch_deepseek_v3_moe_dtype_bug()
+    from runtime_utils import patch_deepseek_v3_moe_dtype_bug
+
+    patch_deepseek_v3_moe_dtype_bug()
 
     # ── 설정 로드 ────────────────────────────────────────────
     cfg_dir = os.path.join(BASE_DIR, "config")
@@ -301,17 +258,10 @@ if __name__ == "__main__":
     else:
         gpus = [int(g) for g in args.gpu.split(",")]
 
-    # 공용 서버라 다른 유저가 GPU 1/2 등을 쓰고 있을 수 있다. device_map/max_memory로 특정 GPU에
-    # 모델을 고정해도, transformers Trainer는 torch.cuda.device_count()로 "보이는" GPU 수를 세서
-    # 필요시 nn.DataParallel로 자동 래핑한다 — 이러면 우리가 고르지 않은(=다른 사람이 쓰는) GPU까지
-    # 건드려 그쪽에서 OOM이 난다. CUDA_VISIBLE_DEVICES로 아예 우리가 쓸 GPU만 보이게 제한해서 원천
-    # 차단한다. 반드시 torch가 CUDA를 초기화하기 전(=train() 안에서 torch/transformers를 실제로
-    # 쓰기 전)에 설정해야 하므로 여기, train() 호출 직전에 설정한다.
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpus)
-    print(f"[물리 GPU {gpus}만 이 프로세스에 보이도록 제한 (CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']})]")
-    # CUDA_VISIBLE_DEVICES로 가리고 나면 프로세스 안에서는 물리 GPU 번호가 아니라 0..N-1로
-    # 다시 매겨지므로, train()에는 로컬 인덱스를 넘긴다.
-    local_gpus = list(range(len(gpus)))
+    # 공용 서버 GPU 침범 방지 — 반드시 torch가 CUDA를 초기화하기 전에 호출 (runtime_utils 참고).
+    from runtime_utils import restrict_visible_gpus
+
+    local_gpus = restrict_visible_gpus(gpus)
 
     target_modules = args.target_modules.split(",") if args.target_modules else None
 

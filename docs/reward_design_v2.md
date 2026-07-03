@@ -40,17 +40,33 @@ v2는 같은 3가지 문제의식(성향 유지, 반박 품질, 반복 억제)�
 
 **막으려는 것:** 라운드가 진행될수록 base model의 중립 성향으로 회귀하는 것(슬라이드 7, 16의 Default Bias) *그리고* 상대 논증에 설득되어 입장이 흔들리는 것(sycophancy). v1의 `S(y)` 직접보상 방식은 "얼마나 진보/보수적인 단어를 썼는가"만 측정해 후자를 못 잡고 전자도 극단화로 왜곡될 수 있다.
 
-임베딩 모델 `E(·)` (judge 불필요, 예: 다국어 sentence-transformer)로 각 발언을 벡터화한다.
+임베딩 모델 `E(·)` (judge 불필요, 기본 `BAAI/bge-m3` — 초안의 ko-sroberta는 max_seq_length 128로
+600토큰 발언이 앞부분만 잘리는 문제가 있어 2026-07-04 교체)로 각 발언을 벡터화한다.
 
-- `anchor` = 해당 side의 SFT 단계 seed 응답 임베딩 평균 (페르소나의 "기준점", `sft/data/{side}_train.jsonl`에서 1회 계산해 캐싱)
+- `anchor` = 해당 side의 SFT 단계 seed 응답 **임베딩 평균** (페르소나의 "기준점",
+  `rl/build_anchor.py`가 `sft/data/{side}_train.jsonl`에서 샘플을 뽑아 `rl/data/anchors/{side}.json`으로
+  저장하고, 학습 시 샘플별 임베딩을 평균해 1회 계산·캐싱. 텍스트를 이어붙여 한 번에 임베딩하면
+  모델 max_seq_length에서 잘리므로 반드시 샘플별 임베딩 후 평균할 것)
 - `drift_i = cos_sim(E(y_i), anchor)` — 기준 페르소나에서 얼마나 멀어졌는가
-- `sycophancy_i = cos_sim(E(y_i), E(opponent_response)) - cos_sim(E(y_{i-1}), E(opponent_prev))` — 상대 쪽으로 이번 턴에 더 가까워졌는가 (새로운 반박 논거 없이 그냥 동조했는가는 R_engagement가 낮으면서 이 값이 양수인 경우로 교차 검증)
+- `sycophancy_i = cos_sim(E(y_i), E(opponent_now)) - cos_sim(E(y_{i-1}), E(opponent_now))` —
+  직전 자기 발언 대비, 이번 발언이 **상대의 이번 주장** 쪽으로 얼마나 더 가까워졌는가
+  (초안은 `E(opponent_prev)` 기준이었으나 "상대의 이번 주장에 흔들렸는가"를 재는 데는
+  현재 상대 발언 기준이 더 직접적이라 구현과 함께 이 정의로 통일)
 
 ```
-R_persona(y_i) = clip(drift_i, 0, 1) - λ_syc · max(0, sycophancy_i)
+coverage_i     = |KP(opponent) ∩ terms(y_i)| / |KP(opponent)|      # §3.2와 동일
+gate_i         = (1 - coverage_i)                                   # syc_coverage_gate=true일 때
+R_persona(y_i) = clip(drift_i, 0, 1) - λ_syc · max(0, sycophancy_i) · gate_i
 ```
 
 `λ_syc` (기본 1.0)는 동조 패널티 강도. `drift_i`는 [0,1]로 clip해 "기준점에서 너무 멀어지지 않았는가"만 보상하고, 더 멀어질수록 추가 보상을 주지 않는다 (v1처럼 극단화를 계속 밀어주지 않음).
+
+`gate_i`(coverage 게이트, 2026-07-04 추가)는 초안에서 "R_engagement가 낮으면서 sycophancy가
+양수인 경우로 교차 검증"이라고만 적고 구현하지 않았던 부분의 실제 구현이다: 상대 논점을 정면으로
+다루면서 가까워진 것(반박·교전, coverage↑)은 페널티를 완화하고, 논점을 회피하며 가까워진 것(동조)만
+강하게 처벌한다. 상대 쪽으로의 모든 스탠스 수렴이 동조는 아니며 정당한 설득·정정이 섞여 있다는
+지적(*Not All Flips Are Conformity: Decomposing Stance Convergence in Multi-Agent LLM Debate*,
+arXiv:2606.00820)에 대한 대응이기도 하다. `config/reward.yaml`의 `persona.syc_coverage_gate`로 끌 수 있다.
 
 > 선택적 보조 신호: judge 기반 `S(y) ∈ [-1,1]`을 `0.2` 가중치로 더할 수 있음 (`config/reward.yaml`의 `persona.judge_aux_weight`). 기본값 0 — judge 없이도 동작.
 

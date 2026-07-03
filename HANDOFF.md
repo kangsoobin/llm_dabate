@@ -20,8 +20,8 @@
 | **base model 교체**: Qwen2.5-14B-Instruct → Kanana-2-30B-A3B-Instruct | ✅ 실제 GPU에서 로딩·학습 검증 완료 | `config/model.yaml` |
 | SFT용 LoRA 어댑터 (Kanana 기준) | ✅ LEFT/RIGHT 둘 다 완료, git에 커밋/push됨 | `adapters/left`, `adapters/right` |
 | `sft/train.py` — LoRA 대상 모듈 자동 탐색으로 리팩터링 | ✅ 실제 Kanana 모델로 검증 완료(아래 §4 참고, 원래 코드에서 몇 군데 수정 필요했음) | `sft/train.py` |
-| GRPO 보상 설계 v1(PDF 원안) / v2(재설계) | ✅ 문서 + 코드 둘 다 완료 | `docs/reward_design_v2.md`, `rl/rewards/` |
-| GRPO 학습 파이프라인 (self-play rollout → GRPOTrainer) | ✅ 코드 작성 완료, ⚠️ **GPU에서 전혀 실행 안 해봄** | `rl/simulate.py`, `rl/rollout.py`, `rl/train_grpo.py` |
+| GRPO 보상 설계 v1(PDF 원안) / v2(재설계) | ✅ 완료 + 2026-07-04 정비(kiwi 형태소·bge-m3·anchor 임베딩평균·syc coverage 게이트) — **sanity check 전 항목 PASS** | `docs/reward_design_v2.md`, `rl/rewards/`, `rl/check_reward_sanity.py` |
+| GRPO 학습 파이프라인 (self-play rollout → GRPOTrainer) | ✅ 코드 정비 완료(bf16+vLLM 서버 모드), self-play 생성은 **vLLM 스모크 실측 검증됨**, ⚠️ GRPOTrainer 학습 루프 자체는 아직 스모크 전 | `rl/simulate_vllm.py`, `rl/rollout.py`, `rl/train_grpo.py` |
 | `check_server.py` — Kanana 기준 실행 가능 여부 체크 | ✅ Plan D로 추가됨, ⚠️ 실제 서버에서 실행 안 해봄 | `check_server.py` |
 
 ## 2. 지금 당장 서버에서 할 일 (순서대로)
@@ -67,28 +67,57 @@ python sft/train.py --side right --gpu 0   # 다른 빈 GPU가 있으면 --gpu 3
 python debate.py
 ```
 
-## 3. SFT 이후 — GRPO 파이프라인 (코드는 있지만 아직 한 번도 안 돌려봄)
+## 3. SFT 이후 — GRPO 파이프라인 (2026-07-04 정비 완료, 아래 순서로 실행)
 
-SFT가 끝나고 어댑터가 정상 동작하는 걸 확인한 뒤에 진행. 순서와 상세는
-[`readme.md`](readme.md)의 "Phase 2 — GRPO 파이프라인" 섹션에 이미 정리되어 있다. 요약:
+2026-07-04에 GRPO 파이프라인을 실전 투입 가능하게 정비했다 (보상 설계 리뷰 + 코드 수정 상세는
+git log와 [`docs/reward_design_v2.md`](docs/reward_design_v2.md) §3.1 갱신분 참고). 핵심 변경:
+
+- **생성은 vLLM으로**: transformers의 DeepSeek-V3 MoE는 128 expert를 Python loop로 돌아
+  (§4-8) GRPO의 대량 생성(스텝당 64회 × 600토큰)이 사실상 불가능. vLLM(0.23, `.venv`에 설치됨,
+  fused MoE 커널)으로 self-play 생성과 GRPO 롤아웃 생성을 모두 처리한다. GPU가 97GB라
+  bf16(61GB)이 통째로 올라간다 — 학습도 4bit 대신 bf16 기본으로 바꿈(`--precision`으로 변경 가능).
+- **보상 정비**: kiwipiepy 형태소 기반 key-point 추출(조사 붙은 어절 문제 해결), 임베딩 모델
+  bge-m3 교체(ko-sroberta는 128토큰 잘림), anchor를 텍스트 결합 → 샘플별 임베딩 평균으로 수정,
+  sycophancy 페널티에 coverage 게이트 추가, 컴포넌트별 값이 `reward_components/*`로 로깅됨.
+- **`rl/check_reward_sanity.py`**: 학습 전 go/no-go 게이트. 2026-07-04 실행 결과 전 항목 PASS
+  (persona 분리: own 0.76 > opposite 0.70 > neutral 0.60 / coverage 분리: 0.70 vs 0.19).
 
 ```bash
-pip install "trl>=0.24" sentence-transformers   # (선택) API judge면 anthropic 또는 openai도
+source .venv/bin/activate   # vllm/kiwipiepy/sentence-transformers 이미 설치됨
 
-python rl/simulate.py --left-adapter adapters/left --right-adapter adapters/right \
-    --n-topics 40 --rounds-per-topic 3 --out rl/data/transcripts.jsonl
+# 1) self-play 트랜스크립트 생성 (vLLM multi-LoRA, GPU 1장, 수십 분 예상)
+python rl/simulate_vllm.py --gpu 0 --n-topics 40 --rounds-per-topic 3
 
-python rl/build_anchor.py --side left
-python rl/build_anchor.py --side right
-# → 출력된 anchor 텍스트를 config/reward.yaml의 v2.anchor_texts.{left,right}에 붙여넣기
+# 2) anchor 생성 (GPU 불필요, 완료됨 — rl/data/anchors/*.json 이미 존재)
+python rl/build_anchor.py --side left && python rl/build_anchor.py --side right
 
-python rl/train_grpo.py --side left  --reward-version v2
-python rl/train_grpo.py --side right --reward-version v2
+# 3) 보상 sanity check (완료됨 — 전 항목 PASS, 재실행해도 됨)
+python rl/check_reward_sanity.py
+
+# 4) GRPO 학습 — 터미널 2개
+#    [터미널 A] vLLM 롤아웃 서버 (빈 GPU 하나):
+CUDA_VISIBLE_DEVICES=3 trl vllm-serve --model kakaocorp/kanana-2-30b-a3b-instruct \
+    --dtype bfloat16 --max_model_len 4096 --gpu_memory_utilization 0.85
+#    [터미널 B] 학습 (다른 빈 GPU). 먼저 --max-steps 2로 스모크 후 본 학습:
+python rl/train_grpo.py --side left --gpu 0 --use-vllm --max-steps 2   # 스모크
+python rl/train_grpo.py --side left --gpu 0 --use-vllm                 # 본 학습
+python rl/train_grpo.py --side right --gpu 0 --use-vllm
+
+# 5) (권장) iterative self-play 1~2회 반복 — MAPoRL(ACL 2025)식 co-training의 경량 근사.
+#    frozen transcript로 1회만 학습하면 정책이 갱신될수록 학습 컨텍스트가 실제 분포와 어긋난다.
+python rl/simulate_vllm.py --gpu 0 --left-adapter adapters/left_grpo --right-adapter adapters/right_grpo \
+    --out rl/data/transcripts_iter2.jsonl
+python rl/train_grpo.py --side left --gpu 0 --use-vllm --transcripts rl/data/transcripts_iter2.jsonl
 ```
 
 `config/reward.yaml`의 `judge.backend`는 기본 `"none"`이다 (v2는 judge 없이도 동작하도록 설계됨,
-[`docs/reward_design_v2.md`](docs/reward_design_v2.md) §1 참고). judge를 쓰고 싶으면 `local`(여유
-GPU 필요, Kanana가 이미 24GB를 많이 쓰고 있어 3번째 GPU 권장) 또는 `api`로 바꿀 것.
+[`docs/reward_design_v2.md`](docs/reward_design_v2.md) §1 참고). judge는 보상보다는 **학습 후
+평가**에 쓰는 것을 권장 (Abdulhai et al., NeurIPS 2025의 prompt-to-line consistency 방식 —
+컨퍼런스 발표용 정량 지표로도 활용 가능).
+
+미구현으로 남긴 것: Diversity Pruning(inference-time, 중간발표 슬라이드 11) — 컨퍼런스에서
+질문 가능성 있으니 "향후 과제"로 정리해둘 것. R_grounding은 AI-Hub 국회 회의록 데이터에 BM25만
+붙이면 활성화 가능하나 일정상 보류.
 
 ## 4. 알려진 리스크 / 이 세션이 검증하지 못한 것
 

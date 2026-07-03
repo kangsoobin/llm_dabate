@@ -35,7 +35,9 @@ v1:
 
 # ── v2: docs/reward_design_v2.md 재설계 ──────────────────────
 v2:
-  embedding_model: "jhgan/ko-sroberta-multitask"
+  # 2026-07-04: ko-sroberta(max_seq_length 128 — 600토큰 발언이 앞부분만 잘림) →
+  # BAAI/bge-m3(8192 토큰, 다국어)로 교체. 서버 공용 HF 캐시에 이미 있음.
+  embedding_model: "BAAI/bge-m3"
   weights:
     persona: 1.0
     engagement: 1.0
@@ -44,13 +46,18 @@ v2:
     grounding: 0.0    # RAG 근거 검색 파이프라인이 붙기 전까지 비활성 (docs/reward_design_v2.md §3.5)
   persona:
     lambda_syc: 1.0
+    # sycophancy 페널티에 key-point coverage 게이트 적용 (docs/reward_design_v2.md §3.1):
+    # 상대 논점을 정면으로 다루며 가까워진 것(반박/교전)은 완화하고, 논점을 회피하며
+    # 가까워진 것(동조)만 강하게 처벌. false면 v2 초안처럼 무조건 페널티.
+    syc_coverage_gate: true
     judge_aux_weight: 0.0    # >0으로 주면 judge 성향점수(S)를 보조 신호로 추가
   engagement:
     judge_weight: 0.0        # >0으로 주면 key-point coverage + judge 1~5점을 혼합
   novelty:
     tau: 0.25
     gamma: 1.5
-  # rl/build_anchor.py --side {left,right} 실행 결과를 아래에 붙여넣으세요.
-  anchor_texts:
-    left: ""
-    right: ""
+  # R_persona anchor: rl/build_anchor.py --side {left,right} 실행이 아래 파일을 생성한다.
+  # (샘플 텍스트 리스트 → 각각 임베딩 후 평균. 파일이 없으면 학습 시작 시 에러로 막음.)
+  anchor_files:
+    left: "rl/data/anchors/left.json"
+    right: "rl/data/anchors/right.json"
