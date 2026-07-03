@@ -45,15 +45,35 @@ header("2. pip 패키지 설치 여부")
 packages = ["torch", "transformers", "accelerate", "bitsandbytes",
             "sentencepiece", "protobuf"]
 pkg_status = {}
+pkg_versions = {}
 for pkg in packages:
     try:
         mod = __import__(pkg)
         ver = getattr(mod, "__version__", "version unknown")
         ok(f"{pkg:<20} {ver}")
         pkg_status[pkg] = True
+        pkg_versions[pkg] = ver
     except ImportError:
         fail(f"{pkg:<20} 미설치")
         pkg_status[pkg] = False
+        pkg_versions[pkg] = None
+
+# Kanana-2-30B-A3B(DeepseekV3ForCausalLM 아키텍처)는 transformers>=4.51.0 필요.
+# 구버전이면 model_type "deepseek_v3"를 인식하지 못해 로딩 자체가 실패한다.
+_tv = pkg_versions.get("transformers")
+if _tv:
+    try:
+        _tv_tuple = tuple(int(x) for x in _tv.split(".")[:2])
+        transformers_ok_for_kanana = _tv_tuple >= (4, 51)
+    except ValueError:
+        transformers_ok_for_kanana = False
+    if transformers_ok_for_kanana:
+        ok(f"transformers {_tv} — Kanana-2-30B-A3B(요구: >=4.51.0) 로딩 가능")
+    else:
+        warn(f"transformers {_tv} — Kanana-2-30B-A3B는 >=4.51.0 필요, 업그레이드하세요 "
+             f"(pip install -U \"transformers>=4.51.0\")")
+else:
+    transformers_ok_for_kanana = False
 
 # ────────────────────────────────────────────────────────────
 # 3. CUDA / NVIDIA 드라이버 / CUDA 버전
@@ -238,14 +258,19 @@ num_gpus   = len(free_vrams)
 # Qwen2.5-14B 4bit  ≈ 9 GB   (실제 ~8–10 GB)
 # Llama-3.1-8B FP16 ≈ 16 GB  (실제 ~15–17 GB)
 # Llama-3.1-8B 8bit ≈ 9 GB
+# Kanana-2-30B-A3B 4bit ≈ 17–18 GB (모델 로딩 기준. 총 30B 파라미터, MoE라 활성 파라미터는 3B지만
+#   VRAM은 "로딩된 전체 가중치" 기준이라 활성 파라미터 수와 무관하게 30B 전체가 잡힘.
+#   QLoRA 학습(옵티마이저 상태 + 활성화)은 이보다 더 필요 — 아래 REQ_D는 inference 기준 하한선.)
 
 REQ_A = 15.0   # Qwen2.5-7B BF16 per GPU
 REQ_B = 9.0    # Qwen2.5-14B 4bit per GPU
 REQ_C_fp16 = 16.0   # Llama-3.1-8B FP16
 REQ_C_8bit = 9.0    # Llama-3.1-8B 8bit
+REQ_D = 18.0   # Kanana-2-30B-A3B 4bit per GPU (inference 기준 — SFT/QLoRA 학습 시 더 필요)
 DISK_7B  = 15   # GB (모델 파일)
 DISK_14B = 29   # GB
 DISK_8B  = 16   # GB
+DISK_KANANA = 65   # GB (30B, bf16 원본 체크포인트 다운로드 기준 — 4bit는 로드 시점에 변환)
 
 def check_plan(label, model_name, req_vram, disk_req, extra_pkg=None):
     print(f"\n  {BOLD}▶ 실행안 {label}: {model_name}{RESET}")
@@ -305,6 +330,15 @@ plan_c_8bit = check_plan(
 )
 feasible["C"] = plan_c_fp16 or plan_c_8bit
 
+feasible["D"] = check_plan(
+    "D (현재 프로젝트 설정)", "Kanana-2-30B-A3B-Instruct × 2  (4-bit, 각 GPU 1개)",
+    REQ_D, DISK_KANANA,
+    extra_pkg=["bitsandbytes"]
+)
+if feasible["D"] and not transformers_ok_for_kanana:
+    fail("  transformers 버전이 낮아 Kanana(deepseek_v3) 로딩 불가 — pip install -U \"transformers>=4.51.0\"")
+    feasible["D"] = False
+
 # ────────────────────────────────────────────────────────────
 # 8. 최종 요약
 # ────────────────────────────────────────────────────────────
@@ -324,9 +358,18 @@ print()
 recommended = [k for k, v in feasible.items() if v]
 if recommended:
     print(f"  {GREEN}{BOLD}✔ 실행 가능한 실행안: {', '.join(recommended)}{RESET}")
-    best = recommended[0]
-    labels = {"A": "Qwen2.5-7B BF16", "B": "Qwen2.5-14B 4bit", "C": "Llama-3.1-8B"}
+    # D(Kanana-2-30B-A3B, 현재 프로젝트가 실제로 쓰는 설정)를 우선 권장. 미가능하면 다른 안 중 첫 번째.
+    best = "D" if "D" in recommended else recommended[0]
+    labels = {
+        "A": "Qwen2.5-7B BF16",
+        "B": "Qwen2.5-14B 4bit",
+        "C": "Llama-3.1-8B",
+        "D": "Kanana-2-30B-A3B 4bit (현재 config/model.yaml 설정)",
+    }
     print(f"  {GREEN}권장 실행안: {best}  ({labels[best]}){RESET}")
+    if best != "D":
+        warn("현재 프로젝트(config/model.yaml)는 Kanana-2-30B-A3B를 쓰도록 설정되어 있습니다 — "
+             "실행안 D가 불가능하면 위 D 항목의 실패 사유를 먼저 해결하세요.")
 else:
     print(f"  {RED}{BOLD}✘ 현재 서버 환경에서는 어떤 실행안도 그대로 실행 불가{RESET}")
     print(f"  {YELLOW}→ VRAM/패키지/디스크 부족 항목을 위 결과에서 확인하세요.{RESET}")

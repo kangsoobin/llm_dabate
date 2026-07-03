@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **New session (especially on the GPU server)? Read [`HANDOFF.md`](HANDOFF.md) first.** It has the
+> current status, an ordered checklist of what to run next, and a list of things that were written
+> without GPU access and haven't been verified yet.
+
 ## Environment
 
 All commands must run inside the `debate` conda environment:

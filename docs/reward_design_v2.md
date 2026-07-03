@@ -3,6 +3,12 @@
 > 원안: [`보상 설계.pdf`](../../보상%20설계.pdf) (강수빈, 성향/반박품질/반복패널티 3종 + GRPO)
 > 방향성 근거: [`투빅스_컨퍼런스 중간발표_NLP.pdf`](../../투빅스_컨퍼런스%20중간발표_NLP.pdf) 03. 프로젝트 설계
 > 이 문서는 코드에서 `config/reward.yaml`의 `version: v2`로 선택해 쓸 수 있다 (`version: v1`이면 PDF 원안 그대로 사용). 구현은 [`rl/rewards/`](../rl/rewards).
+>
+> **base model 무관 설계.** 이 문서를 작성할 당시 LEFT/RIGHT의 base model은 Qwen2.5-14B-Instruct였고,
+> 이후 2026-07-02에 Kanana-2-30B-A3B-Instruct로 교체되었다(`config/model.yaml`, `CLAUDE.md` 참고).
+> 보상 설계 자체(§2~§4)는 어떤 base model을 debate에 쓰든 동일하게 적용된다 — 임베딩/키워드/Jaccard
+> 기반 컴포넌트는 텍스트만 보고, judge 모델(§7 LocalJudge 예시의 Qwen2.5-7B)도 LEFT/RIGHT와 독립적으로
+> 교체 가능하다. GRPO 학습 대상(`rl/train_grpo.py`)만 Kanana 기준 SFT 어댑터를 이어받도록 하면 된다.
 
 ## 1. 왜 다시 설계하는가
 

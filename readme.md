@@ -74,10 +74,12 @@ python sft/train.py --side right
 - LEFT(GPU 0) / RIGHT(GPU 1) 동시 병렬 실행
 - 출력: `sft/data/left_train.jsonl`, `sft/data/right_train.jsonl`
 
-**QLoRA 설정 (sft/train.py)**
-- 베이스 모델: Qwen2.5-14B-Instruct (4-bit NF4 양자화)
+**QLoRA 설정 (sft/train.py) — 아래는 Qwen2.5-14B 시절 최초 실행 기록. 현재 base model은 Kanana로
+바뀌었으니 대상 모듈/소요 시간은 참고만 하고 최신 내용은 위 "2026-07-02 모델 교체" 안내와
+`sft/train.py` 코드를 따를 것 (target_modules는 이제 하드코딩이 아니라 런타임 자동 탐색).**
+- 베이스 모델: Qwen2.5-14B-Instruct (4-bit NF4 양자화) — *(과거 기록, 현재는 Kanana-2-30B-A3B)*
 - LoRA: `r=64`, `lora_alpha=128`, `lora_dropout=0.05`
-- 대상 모듈: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- 대상 모듈(Qwen 시절, 하드코딩값): `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
 - 훈련: 1 epoch, `lr=2e-4`, `batch=4`, `grad_accum=8` (effective batch=32)
 - 출력: `adapters/left/`, `adapters/right/`
 
