@@ -46,12 +46,18 @@ if BASE_DIR not in sys.path:
 # ────────────────────────────────────────────────────────────
 
 # 밀집(dense) attention(Qwen 등) + MLA attention(Kanana/DeepSeek-V3) + SwiGLU MLP(dense/shared/routed
-# 공통) + MoE 라우터를 모두 아우르는 leaf 모듈 이름 후보 집합. 실제로 모델에 존재하는 것만 골라 쓴다.
+# 공통) leaf 모듈 이름 후보 집합. 실제로 모델에 존재하는 것만 골라 쓴다.
+#
+# "gate"(MoE 라우터, DeepseekV3TopkRouter)는 의도적으로 제외한다: 표준 nn.Linear가 아니라
+# self.weight를 raw nn.Parameter로 직접 들고 있어서, LoRA를 붙이면 peft가 모듈 전체를
+# ParamWrapper로 교체한다. 그런데 DeepSeek-V3 라우팅 로직(route_tokens_to_experts)이
+# self.gate.e_score_correction_bias(로드밸런싱용 보정 bias, 라우터 전용 속성)에 접근하는데
+# ParamWrapper는 원본 모듈의 이런 부가 속성을 프록시하지 않아 forward에서 AttributeError로
+# 죽는다. 라우터는 attention/MLP/shared_experts 대비 파라미터 비중도 작으니 LoRA 대상에서 뺀다.
 _LORA_LEAF_NAMES = {
     "q_proj", "k_proj", "v_proj", "o_proj",                      # 밀집 attention
     "q_a_proj", "q_b_proj", "kv_a_proj_with_mqa", "kv_b_proj",   # MLA attention
     "gate_proj", "up_proj", "down_proj",                         # SwiGLU MLP
-    "gate",                                                      # MoE 라우터
 }
 _ROUTED_EXPERT_SEGMENT = re.compile(r"\.experts\.\d+\.")
 
@@ -85,12 +91,57 @@ def discover_lora_target_modules(model, include_routed_experts: bool = False) ->
 
 
 # ────────────────────────────────────────────────────────────
+# transformers 4.57.6 DeepSeek-V3 MoE dtype 버그 런타임 패치
+# ────────────────────────────────────────────────────────────
+
+def _patch_deepseek_v3_moe_dtype_bug() -> None:
+    """
+    transformers의 DeepseekV3MoE.moe()가
+    `final_hidden_states = torch.zeros_like(hidden_states, dtype=topk_weights.dtype)`로 dtype을
+    hidden_states가 아니라 router 출력(topk_weights)의 dtype에 맞춰 만든다. 그런데 개별 expert의
+    출력(expert_output * expert_weights)이 실제로는 다른 dtype으로 나올 수 있어(4bit 양자화 +
+    gradient checkpointing 조합에서 관찰됨) `index_add_(): self와 source의 scalar type이 달라야 한다`는
+    RuntimeError로 학습 첫 스텝에서 죽는다. 코드 자체에 "CALL FOR CONTRIBUTION! I don't have time to
+    optimise this right now"라는 주석이 달려있을 만큼 다듬어지지 않은 부분 — 라이브러리 업스트림 수정을
+    기다리는 대신, 이 함수를 원래 hidden_states dtype으로 고정하고 index_add_ 직전에 명시적으로 dtype을
+    맞춰주는 버전으로 런타임에 교체한다. site-packages 파일을 직접 고치면 재설치 시 사라지므로, 여기서
+    모델 로드 전에 몽키패치한다.
+    """
+    try:
+        from transformers.models.deepseek_v3 import modeling_deepseek_v3 as _dsv3
+    except ImportError:
+        return
+
+    def _fixed_moe(self, hidden_states, topk_indices, topk_weights):
+        final_hidden_states = torch.zeros_like(hidden_states)
+        expert_mask = torch.nn.functional.one_hot(topk_indices, num_classes=len(self.experts))
+        expert_mask = expert_mask.permute(2, 0, 1)
+
+        for expert_idx in range(len(self.experts)):
+            expert = self.experts[expert_idx]
+            mask = expert_mask[expert_idx]
+            token_indices, weight_indices = torch.where(mask)
+
+            if token_indices.numel() > 0:
+                expert_weights = topk_weights[token_indices, weight_indices]
+                expert_input = hidden_states[token_indices]
+                expert_output = expert(expert_input)
+                weighted_output = (expert_output * expert_weights.unsqueeze(-1)).to(final_hidden_states.dtype)
+                final_hidden_states.index_add_(0, token_indices, weighted_output)
+
+        return final_hidden_states.type(hidden_states.dtype)
+
+    _dsv3.DeepseekV3MoE.moe = _fixed_moe
+    print("  [패치] transformers DeepseekV3MoE.moe() dtype 버그 런타임 패치 적용됨")
+
+
+# ────────────────────────────────────────────────────────────
 # 훈련 메인
 # ────────────────────────────────────────────────────────────
 
 def train(
     side: str,
-    gpu: int,
+    gpus: list[int],
     lora_r: int,
     target_modules: list[str] | None,
     lora_experts: bool,
@@ -103,6 +154,8 @@ def train(
         BitsAndBytesConfig,
     )
     from trl import SFTTrainer, SFTConfig
+
+    _patch_deepseek_v3_moe_dtype_bug()
 
     # ── 설정 로드 ────────────────────────────────────────────
     cfg_dir = os.path.join(BASE_DIR, "config")
@@ -120,7 +173,7 @@ def train(
 
     print(f"\n[{side.upper()}] 훈련 시작")
     print(f"  모델: {model_id}")
-    print(f"  GPU:  {gpu}")
+    print(f"  GPU:  {gpus}")
     print(f"  데이터: {data_path}")
     print(f"  LoRA r: {lora_r}, alpha: {lora_r * 2}")
     print(f"  출력: {output_dir}\n")
@@ -132,16 +185,30 @@ def train(
     tokenizer.padding_side = "right"
 
     # ── 모델 (4-bit) ─────────────────────────────────────────
+    # 주의: Kanana(DeepseekV3ForCausalLM)의 routed expert 128개는 transformers 구현상
+    # 개별 nn.Linear가 아니라 DeepseekV3NaiveMoe 안의 fused nn.Parameter(gate_up_proj/down_proj,
+    # shape [128, ...])다. bitsandbytes의 load_in_4bit는 nn.Linear만 골라 Linear4bit로 치환하므로
+    # 이 fused expert 텐서는 양자화되지 않고 bf16 그대로 로드된다 — 모델 파라미터 대부분이 routed
+    # expert이므로 4bit 설정에도 실제 메모리 사용량은 거의 bf16 풀사이즈(~60GB)에 가깝다.
+    # 따라서 단일 GPU에 우겨넣지 않고 device_map="auto" + max_memory로 지정된 여러 GPU에
+    # 자동 분산시킨다 (CPU 오프로드는 매우 느리므로 명시적으로 차단).
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_use_double_quant=True,
     )
+    if len(gpus) == 1:
+        device_map = {"": gpus[0]}
+    else:
+        device_map = "auto"
+    max_memory = {g: "90GiB" for g in gpus}
+    max_memory["cpu"] = "0GiB"
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         quantization_config=bnb_config,
-        device_map={"": gpu},
+        device_map=device_map,
+        max_memory=max_memory,
         trust_remote_code=True,
     )
     model = prepare_model_for_kbit_training(model)
@@ -211,8 +278,9 @@ def train(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="QLoRA SFT 파인튜닝")
     parser.add_argument("--side", choices=["left", "right"], required=True)
-    parser.add_argument("--gpu",  type=int, default=None,
-                        help="GPU 번호 (기본: left=0, right=1)")
+    parser.add_argument("--gpu",  type=str, default=None,
+                        help="GPU 번호, 콤마로 여러 개 지정 시 device_map='auto'로 분산 "
+                             "(예: --gpu 0 또는 --gpu 0,3). 기본: left=0, right=1")
     parser.add_argument("--r",    type=int, default=16,
                         help="LoRA rank (기본: 16)")
     parser.add_argument(
@@ -229,8 +297,22 @@ if __name__ == "__main__":
         cfg_path = os.path.join(BASE_DIR, "config", "model.yaml")
         with open(cfg_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
-        args.gpu = cfg["left_gpu"] if args.side == "left" else cfg["right_gpu"]
+        gpus = [cfg["left_gpu"] if args.side == "left" else cfg["right_gpu"]]
+    else:
+        gpus = [int(g) for g in args.gpu.split(",")]
+
+    # 공용 서버라 다른 유저가 GPU 1/2 등을 쓰고 있을 수 있다. device_map/max_memory로 특정 GPU에
+    # 모델을 고정해도, transformers Trainer는 torch.cuda.device_count()로 "보이는" GPU 수를 세서
+    # 필요시 nn.DataParallel로 자동 래핑한다 — 이러면 우리가 고르지 않은(=다른 사람이 쓰는) GPU까지
+    # 건드려 그쪽에서 OOM이 난다. CUDA_VISIBLE_DEVICES로 아예 우리가 쓸 GPU만 보이게 제한해서 원천
+    # 차단한다. 반드시 torch가 CUDA를 초기화하기 전(=train() 안에서 torch/transformers를 실제로
+    # 쓰기 전)에 설정해야 하므로 여기, train() 호출 직전에 설정한다.
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpus)
+    print(f"[물리 GPU {gpus}만 이 프로세스에 보이도록 제한 (CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']})]")
+    # CUDA_VISIBLE_DEVICES로 가리고 나면 프로세스 안에서는 물리 GPU 번호가 아니라 0..N-1로
+    # 다시 매겨지므로, train()에는 로컬 인덱스를 넘긴다.
+    local_gpus = list(range(len(gpus)))
 
     target_modules = args.target_modules.split(",") if args.target_modules else None
 
-    train(args.side, args.gpu, args.r, target_modules, args.lora_experts)
+    train(args.side, local_gpus, args.r, target_modules, args.lora_experts)

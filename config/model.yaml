@@ -23,8 +23,9 @@ quantization: "4bit"
 
 # ── SFT LoRA 어댑터 경로 ────────────────────────────────────
 # SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
-# Kanana 기준 재학습 전까지는 null 유지 (Qwen용 기존 adapters/는 구조가 달라 로드 불가).
-left_adapter:  null
+# 2026-07-03: Kanana 기준 재학습 완료. left는 학습 끝나 경로 반영(loss 2.05→0.17,
+# mean_token_accuracy 0.96). right는 아직 학습 중이라 완료되면 경로 반영 예정.
+left_adapter:  "adapters/left"
 right_adapter: null
 
 # ── 텍스트 생성 파라미터 ────────────────────────────────────
