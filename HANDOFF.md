@@ -4,19 +4,21 @@
 가장 먼저 읽는 문서. 지금까지 무엇이 됐고, 뭐가 안 됐고, 다음에 뭘 해야 하는지가 여기 있다.
 **작업을 진행할 때마다 이 문서의 체크리스트를 직접 갱신할 것** — §6 참고.
 
-**2026-07-03 업데이트: SFT가 실제 GPU 서버에서 처음으로 끝까지 돌아갔다.** LEFT는 60/60 스텝
-완료(`adapters/left`, loss 2.05→0.17, mean_token_accuracy 0.96), RIGHT는 진행 중. 아래 §1/§4는
-그 과정에서 확인된 내용으로 갱신했다. GRPO 쪽(§3)은 여전히 미검증이니 그 부분은 아래 리스크를
-계속 참고할 것.
+**2026-07-04 업데이트: SFT가 LEFT/RIGHT 둘 다 실제 GPU 서버에서 끝까지 돌아갔다.** LEFT
+60/60 스텝(`adapters/left`, loss 2.05→0.17, mean_token_accuracy 0.96), RIGHT도 60/60 스텝
+(`adapters/right`, loss 2.03→0.14, mean_token_accuracy 0.97) 완료 — 둘 다 GPU 0/GPU 3에 병렬로
+각각 약 6~6.5시간 걸렸다. `config/model.yaml`에 두 경로 모두 반영됨. 아래 §1/§4는 그 과정에서
+확인된 내용으로 갱신했다. GRPO 쪽(§3)은 여전히 미검증이니 그 부분은 아래 리스크를 계속 참고할 것.
+다음 할 일은 §2의 6번(정성 확인, `python debate.py`)부터.
 
 ## 1. 지금까지 진행 상황
 
 | 단계 | 상태 | 위치 |
 |---|---|---|
-| Streamlit/터미널 토론 시스템 (LEFT vs RIGHT, 상대 발언 주입) | ✅ 완료, Qwen 기준 검증됨 | `debate.py`, `app.py`, `core/session.py` |
+| Streamlit/터미널 토론 시스템 (LEFT vs RIGHT, 상대 발언 주입) | ✅ 완료, Qwen 기준 검증됨. ⚠️ Kanana 어댑터로는 아직 실행 안 해봄(§2-6) | `debate.py`, `app.py`, `core/session.py` |
 | SFT 데이터 (페르소나 프롬프트 + 질문 100개 × 응답) | ✅ 팀원 공유분 재사용, `sft/data/*.jsonl`에 있음 | `sft/data/` (git 미추적, `.gitignore`) |
 | **base model 교체**: Qwen2.5-14B-Instruct → Kanana-2-30B-A3B-Instruct | ✅ 실제 GPU에서 로딩·학습 검증 완료 | `config/model.yaml` |
-| SFT용 LoRA 어댑터 (Kanana 기준) | ✅ LEFT 완료(`adapters/left`), RIGHT 진행 중(완료되면 `adapters/right`) | `adapters/left`, `adapters/right` |
+| SFT용 LoRA 어댑터 (Kanana 기준) | ✅ LEFT/RIGHT 둘 다 완료, git에 커밋/push됨 | `adapters/left`, `adapters/right` |
 | `sft/train.py` — LoRA 대상 모듈 자동 탐색으로 리팩터링 | ✅ 실제 Kanana 모델로 검증 완료(아래 §4 참고, 원래 코드에서 몇 군데 수정 필요했음) | `sft/train.py` |
 | GRPO 보상 설계 v1(PDF 원안) / v2(재설계) | ✅ 문서 + 코드 둘 다 완료 | `docs/reward_design_v2.md`, `rl/rewards/` |
 | GRPO 학습 파이프라인 (self-play rollout → GRPOTrainer) | ✅ 코드 작성 완료, ⚠️ **GPU에서 전혀 실행 안 해봄** | `rl/simulate.py`, `rl/rollout.py`, `rl/train_grpo.py` |
@@ -57,7 +59,7 @@ python sft/train.py --side right --gpu 0   # 다른 빈 GPU가 있으면 --gpu 3
 #   ⚠️ 실측 소요시간: 스텝당 약 355~400초, 총 60 스텝 → side당 약 6시간 (§4-7 참고, 이유는
 #   transformers의 MoE forward가 128 expert를 Python for-loop로 도는 비최적화 구현이기 때문).
 
-# 5. config/model.yaml에 어댑터 경로 반영 (완료된 side만)
+# 5. config/model.yaml에 어댑터 경로 반영 — 2026-07-04, 이미 반영되어 있음(둘 다 완료)
 #   left_adapter:  "adapters/left"
 #   right_adapter: "adapters/right"
 

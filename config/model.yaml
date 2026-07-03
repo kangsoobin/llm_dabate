@@ -5,8 +5,8 @@
 # HuggingFace 모델 ID
 # 2026-07-02: Qwen2.5-14B-Instruct(구 모델) → Kanana-2-30B-A3B-Instruct(카카오, 한국어 최신 모델)로 교체.
 # 아키텍처가 DeepseekV3ForCausalLM(MLA + MoE, 128 routed + 2 shared experts)로 Qwen과 완전히 다르므로
-# transformers>=4.51.0 필요. 기존 Qwen 기반 adapters/left, adapters/right는 이 모델에 로드할 수 없다
-# (아래 left_adapter/right_adapter가 null인 이유 — sft/train.py로 재학습 필요, 학습 데이터는 재사용 가능).
+# transformers==4.57.6 필요 (5.x는 MoE 구현이 달라서 못 씀 — HANDOFF.md §4-3 참고).
+# 2026-07-03/04: LEFT/RIGHT 모두 Kanana 기준 SFT 재학습 완료, 아래 경로 반영됨.
 model_id: "kakaocorp/kanana-2-30b-a3b-instruct"
 
 # GPU 할당 (0-based index)
@@ -23,10 +23,10 @@ quantization: "4bit"
 
 # ── SFT LoRA 어댑터 경로 ────────────────────────────────────
 # SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
-# 2026-07-03: Kanana 기준 재학습 완료. left는 학습 끝나 경로 반영(loss 2.05→0.17,
-# mean_token_accuracy 0.96). right는 아직 학습 중이라 완료되면 경로 반영 예정.
+# 2026-07-03/04: Kanana 기준 재학습 완료 (LEFT loss 2.05→0.17, mean_token_accuracy 0.96 /
+# RIGHT loss 2.03→0.14, mean_token_accuracy 0.97).
 left_adapter:  "adapters/left"
-right_adapter: null
+right_adapter: "adapters/right"
 
 # ── 텍스트 생성 파라미터 ────────────────────────────────────
 max_new_tokens: 600       # 응답 최대 토큰 수
