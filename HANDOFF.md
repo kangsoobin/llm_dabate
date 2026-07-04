@@ -137,9 +137,26 @@ python rl/train_grpo.py --side left --gpu 0 --use-vllm --transcripts rl/data/tra
 - 생성의 92~100%가 `max_new_tokens=600` 상한에 걸림(clipped) — 토론 발언이 원래 긴 스타일.
   보상 계산에는 문제없으나, 완결된 발언을 원하면 max_new_tokens 상향 고려.
 
-**다음 세션이 할 일:** ① `python debate.py`로 GRPO 어댑터 정성 검증 (SFT 어댑터와 비교 —
-model.yaml 경로 바꿔가며 같은 주제 토론), ② readme.md의 검증 절차(스탠스 점수 유지력,
-중립 표현 빈도)로 정량 비교, ③ 필요시 iterative self-play 1회.
+### 2026-07-04 정성/정량 검증 + Synthesizer 하이브리드 (완료)
+
+**SFT vs GRPO 비교** (`docs/eval/20260704_sft_vs_grpo_report.md`, 원문 md 포함):
+- 중립·양시론 표현 0회(양쪽 모두), anchor 유사도 8라운드 내내 ~0.77 → **중립 회귀 문제는
+  SFT 단계에서 이미 해결** (프로젝트 1차 목표 달성 증거)
+- GRPO 기여: 논점 커버리지 개선(R2 0.547→0.672 등), 상대 프레임 직접 인용 반박 경향
+- 한계 발견: 라운드 5+ 자기반복 심함(Jaccard 0.8~0.9, 사실상 복붙) — 학습이 3라운드까지만
+  본 것 + 같은 질문 반복 주입 구조가 원인
+
+**Synthesizer 하이브리드** (`core/synthesizer.py`, `docs/eval/20260704_grpo_vs_hybrid_report.md`):
+- 중립 종합자(base 모델, 어댑터 없음)가 ① 3라운드마다 개입해 쟁점 정리 + 미다룬 하위 쟁점으로
+  사회자 질문 교체, ② 종료 시 최종 종합(목업 패널 구조) 생성. 판정은 하지 않음(Judge Ceiling 대응).
+- `python rl/simulate_vllm.py ... --synthesizer-every 3 --synthesizer-final`로 실행.
+  **학습 데이터 생성 시에는 켜지 말 것** (보상 문맥이 달라짐).
+- 실측: 개입 직후 자기반복 급감 (R4 0.593→0.250, R7 0.819→0.274) — 반복 루프 차단 확인.
+  DPO 학습 버전은 향후 과제.
+
+**다음 세션이 할 일 (후보):** ① base(어댑터 없음) 추가한 3-way 비교로 발표용 그래프 완성,
+② UI 연결(팀 준비분)에 Synthesizer 훅 연동, ③ 필요시 iterative self-play (rounds-per-topic 6
+권장 — 후반 라운드를 학습 분포에 포함).
 
 ## 4. 알려진 리스크 / 이 세션이 검증하지 못한 것
 

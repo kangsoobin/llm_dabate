@@ -60,6 +60,7 @@ def neutral_hits(text: str) -> int:
 def analyze(rows: list[dict], embedder: SentenceEmbedder, anchor_vecs: dict) -> dict:
     per_round: dict[int, dict] = defaultdict(lambda: {"drift": [], "coverage": [], "selfrep": [], "neutral": 0, "n": 0})
     total_neutral = 0
+    rows = [r for r in rows if r["side"] in ("left", "right")]  # synthesizer 턴은 토론자 지표에서 제외
     for r in rows:
         rd = per_round[r["round_num"]]
         resp = r["response_ref"]

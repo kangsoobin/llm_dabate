@@ -34,6 +34,11 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from core.session import build_debate_message  # noqa: E402  (무거운 모델 로딩 없음)
+from core.synthesizer import (  # noqa: E402
+    build_final_synthesis_messages,
+    build_mid_intervention_messages,
+    parse_next_question,
+)
 from runtime_utils import restrict_visible_gpus  # noqa: E402
 
 LEFT_NAME = "이진보"   # agents/left_agent.py와 동일
@@ -49,7 +54,7 @@ def load_topics(n: int | None = None) -> list[str]:
     return topics[:n] if n is not None else topics
 
 
-def load_configs() -> tuple[dict, dict, str, str]:
+def load_configs() -> tuple[dict, dict, dict]:
     cfg_dir = os.path.join(BASE_DIR, "config")
     with open(os.path.join(cfg_dir, "model.yaml"), encoding="utf-8") as f:
         model_cfg = yaml.safe_load(f)
@@ -61,7 +66,7 @@ def load_configs() -> tuple[dict, dict, str, str]:
         "top_p": model_cfg["top_p"],
         "repetition_penalty": model_cfg["repetition_penalty"],
     }
-    return model_cfg, gen_cfg, prompts["left"], prompts["right"]
+    return model_cfg, gen_cfg, prompts
 
 
 def main() -> None:
@@ -75,6 +80,16 @@ def main() -> None:
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", default=os.path.join("rl", "data", "transcripts.jsonl"))
+    parser.add_argument(
+        "--synthesizer-every", type=int, default=0,
+        help="N라운드마다 중립 Synthesizer(base 모델)가 개입해 쟁점을 정리하고 다음 라운드 질문을 "
+             "교체한다 (반복 루프 차단, core/synthesizer.py). 0이면 개입 없음 — 학습 데이터 생성 시에는 "
+             "0을 유지하고, 정성 평가/데모 생성에서만 켤 것.",
+    )
+    parser.add_argument(
+        "--synthesizer-final", action="store_true",
+        help="토론 종료 후 최종 종합(핵심 쟁점/양측 논거/합의점/남은 쟁점)을 생성해 함께 저장.",
+    )
     args = parser.parse_args()
 
     # 공용 서버 GPU 침범 방지 — vllm/torch가 CUDA를 초기화하기 전에 호출
@@ -83,7 +98,12 @@ def main() -> None:
     from vllm import LLM, SamplingParams  # noqa: E402  (CUDA_VISIBLE_DEVICES 설정 후 import)
     from vllm.lora.request import LoRARequest  # noqa: E402
 
-    model_cfg, gen_cfg, left_prompt, right_prompt = load_configs()
+    model_cfg, gen_cfg, prompts = load_configs()
+    left_prompt, right_prompt = prompts["left"], prompts["right"]
+    synthesizer_prompt = prompts.get("synthesizer", "")
+    if (args.synthesizer_every or args.synthesizer_final) and not synthesizer_prompt:
+        print("[오류] config/prompts.yaml에 synthesizer 프롬프트가 없습니다.")
+        sys.exit(1)
 
     left_adapter = os.path.join(BASE_DIR, args.left_adapter)
     right_adapter = os.path.join(BASE_DIR, args.right_adapter)
@@ -116,13 +136,19 @@ def main() -> None:
     topics = load_topics(args.n_topics)
     random.Random(args.seed).shuffle(topics)
     n = len(topics)
-    print(f"토픽 {n}개 × {args.rounds_per_topic}라운드 × 2 side self-play 시작")
+    print(f"토픽 {n}개 × {args.rounds_per_topic}라운드 × 2 side self-play 시작"
+          + (f" (Synthesizer 개입: {args.synthesizer_every}라운드마다)" if args.synthesizer_every else ""))
 
     # 토픽별 side별 대화 히스토리 (system 제외, user/assistant 교대)
     left_hist: list[list[dict]] = [[] for _ in range(n)]
     right_hist: list[list[dict]] = [[] for _ in range(n)]
     last_left: list[str] = [""] * n   # 각 토픽에서 LEFT의 직전 발언
     last_right: list[str] = [""] * n
+    questions: list[str] = list(topics)          # 현재 사회자 질문 (Synthesizer 개입 시 교체됨)
+    debate_turns: list[list[tuple]] = [[] for _ in range(n)]  # Synthesizer 입력용 (side, text) 시간순
+
+    # Synthesizer는 정리·종합 작업이라 낮은 temperature로 생성
+    synth_sampling = SamplingParams(temperature=0.3, top_p=0.9, max_tokens=800, seed=args.seed)
 
     rows: list[dict] = []
 
@@ -137,7 +163,7 @@ def main() -> None:
 
         conversations = []
         for t in range(n):
-            user_msg = build_debate_message(topics[t], opp_last[t], opp_name, speaker_side=side)
+            user_msg = build_debate_message(questions[t], opp_last[t], opp_name, speaker_side=side)
             conversations.append(
                 [{"role": "system", "content": system_prompt}] + hists[t] + [{"role": "user", "content": user_msg}]
             )
@@ -150,7 +176,8 @@ def main() -> None:
             rows.append(
                 {
                     "side": side,
-                    "question": topics[t],
+                    "topic": topics[t],
+                    "question": questions[t],
                     "opponent_response": opp_last[t],
                     "own_history": own_history,
                     "round_num": round_idx,
@@ -160,16 +187,74 @@ def main() -> None:
             )
             hists[t].append({"role": "user", "content": conversations[t][-1]["content"]})
             hists[t].append({"role": "assistant", "content": response})
+            debate_turns[t].append((side, response))
             if is_left:
                 last_left[t] = response
             else:
                 last_right[t] = response
+
+    def run_synthesizer_mid(round_idx: int) -> None:
+        """모든 토픽에 대해 중간 개입을 배치 생성하고, 다음 라운드 질문을 교체한다. base 모델(LoRA 없음)."""
+        conversations = [
+            build_mid_intervention_messages(synthesizer_prompt, topics[t], debate_turns[t])
+            for t in range(n)
+        ]
+        outputs = llm.chat(conversations, synth_sampling)
+        for t, out in enumerate(outputs):
+            text = out.outputs[0].text.strip()
+            new_q = parse_next_question(text, fallback=questions[t])
+            rows.append(
+                {
+                    "side": "synthesizer",
+                    "topic": topics[t],
+                    "question": questions[t],
+                    "opponent_response": "",
+                    "own_history": [],
+                    "round_num": round_idx,
+                    "prompt_messages": conversations[t],
+                    "response_ref": text,
+                    "next_question": new_q,
+                }
+            )
+            questions[t] = new_q
+
+    def run_synthesizer_final() -> None:
+        """토론 종료 후 최종 종합을 배치 생성. base 모델(LoRA 없음)."""
+        conversations = [
+            build_final_synthesis_messages(synthesizer_prompt, topics[t], debate_turns[t])
+            for t in range(n)
+        ]
+        outputs = llm.chat(conversations, synth_sampling)
+        for t, out in enumerate(outputs):
+            rows.append(
+                {
+                    "side": "synthesizer_final",
+                    "topic": topics[t],
+                    "question": topics[t],
+                    "opponent_response": "",
+                    "own_history": [],
+                    "round_num": args.rounds_per_topic,
+                    "prompt_messages": conversations[t],
+                    "response_ref": out.outputs[0].text.strip(),
+                }
+            )
 
     for round_idx in range(1, args.rounds_per_topic + 1):
         print(f"  라운드 {round_idx}/{args.rounds_per_topic} — LEFT 배치 생성...")
         run_side_turn("left", round_idx)
         print(f"  라운드 {round_idx}/{args.rounds_per_topic} — RIGHT 배치 생성...")
         run_side_turn("right", round_idx)
+        if (
+            args.synthesizer_every
+            and round_idx % args.synthesizer_every == 0
+            and round_idx < args.rounds_per_topic
+        ):
+            print(f"  라운드 {round_idx} — Synthesizer 중간 개입 (질문 전환)...")
+            run_synthesizer_mid(round_idx)
+
+    if args.synthesizer_final:
+        print("  Synthesizer 최종 종합 생성...")
+        run_synthesizer_final()
 
     out_path = os.path.join(BASE_DIR, args.out) if not os.path.isabs(args.out) else args.out
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
