@@ -1,0 +1,269 @@
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://kit.fontawesome.com/60922a65ea.js" crossorigin="anonymous"></script>
+    <script src="main.js" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Debate - Policy Debate AI</title>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar_logo">
+            <img src="img/logo.svg" alt="Logo">
+            <a href="home.html">Tobig's Conference <span class="logo_divider">|</span> Policy Debate AI</a>
+        </div>
+
+        <ul class="navbar_menu">
+            <li><a href="home.html">Main</a></li>
+            <li><a href="debate.html" class="is-active">Debate</a></li>
+            <li><a href="research.html">Research</a></li>
+        </ul>
+
+        <button class="navbar_toggleBtn" type="button" aria-label="메뉴 열기">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+    </nav>
+
+    <main class="page debate_page">
+
+        <section class="section" id="agent-generating">
+            <div class="section_head">
+                <h2>Agent Generating</h2>
+                <p>토론을 진행할 Agent를 생성합니다.</p>
+            </div>
+
+            <div class="search generating_search">
+                <form class="search_form">
+                    <i class="fa-solid fa-magnifying-glass search_icon"></i>
+                    <input type="search" value="기본 소득을 도입해야 하는가?" placeholder="토론하고 싶은 정책 주제를 입력하세요.">
+                    <button type="submit" aria-label="검색">
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </button>
+                </form>
+                <div class="generating_status">
+                    <i class="fa-solid fa-spinner fa-spin"></i>
+                    <span>Generating Debate...</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="debate-agents">
+            <div class="section_head">
+                <h2>Debate Agents</h2>
+                <p>Progressive Agent와 Conservative Agent는 다음과 같은 역할을 담당합니다.</p>
+            </div>
+
+            <div class="agent_grid">
+                <div class="agent_card agent_card--progressive">
+                    <div class="agent_card_head">
+                        <span class="agent_icon"><i class="fa-solid fa-user"></i></span>
+                        <div>
+                            <h3>Progressive Agent</h3>
+                            <span class="agent_tags">공공성 · 형평성 · 제도 개선 강조</span>
+                        </div>
+                    </div>
+                    <p class="agent_desc">
+                        의료는 노동이 아닌 복지의 관점에서 접근해야 하며, 공공 인프라 확충을 통해 형평성을 높여야 한다는 입장입니다.
+                        정부 재정을 통해 격차를 줄이고, 사회 안전망을 강화하는 정책 확대를 지지합니다.
+                    </p>
+                </div>
+
+                <div class="agent_card agent_card--conservative">
+                    <div class="agent_card_head">
+                        <span class="agent_icon"><i class="fa-solid fa-user"></i></span>
+                        <div>
+                            <h3>Conservative Agent</h3>
+                            <span class="agent_tags">시장 자율 · 재정 건전성 · 제도 안정성 강조</span>
+                        </div>
+                    </div>
+                    <p class="agent_desc">
+                        시장 원리, 세밀 자율에 배분 원칙을 존중하며, 단계적 변화를 바탕으로 제도를 안정적으로 개편해야 한다는
+                        입장입니다. 재정 부담을 최소화하고, 지속 가능한 정책 설계를 우선합니다.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="debate-progress">
+            <div class="section_head">
+                <h2>Debate Progress</h2>
+                <p>사용자가 선택한 주제로 Progressive Agent와 Conservative Agent가 서로의 발언을 참고하며 토론합니다.</p>
+            </div>
+
+            <div class="debate_thread">
+                <div class="debate_topic">
+                    <span class="debate_topic_label">Debate Topic</span>
+                    <h3>기본소득을 도입해야 하는가?</h3>
+                </div>
+
+                <div class="speech speech--left">
+                    <div class="speech_meta">
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                        <span class="speech_name">Progressive Agent</span>
+                        <span class="agent_tags">공공성 · 형평성 · 제도 개선 강조</span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--progressive">Speech</div>
+                </div>
+
+                <div class="speech speech--right">
+                    <div class="speech_meta">
+                        <span class="speech_name">Conservative Agent</span>
+                        <span class="agent_tags">시장 자율 · 재정 건전성 · 제도 안정성 강조</span>
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--conservative">Speech</div>
+                </div>
+
+                <div class="speech speech--left">
+                    <div class="speech_meta">
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                        <span class="speech_name">Progressive Agent</span>
+                        <span class="agent_tags">공공성 · 형평성 · 제도 개선 강조</span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--progressive">Speech</div>
+                </div>
+
+                <div class="speech speech--right">
+                    <div class="speech_meta">
+                        <span class="speech_name">Conservative Agent</span>
+                        <span class="agent_tags">시장 자율 · 재정 건전성 · 제도 안정성 강조</span>
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--conservative">Speech</div>
+                </div>
+
+                <div class="speech speech--left">
+                    <div class="speech_meta">
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                        <span class="speech_name">Progressive Agent</span>
+                        <span class="agent_tags">공공성 · 형평성 · 제도 개선 강조</span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--progressive">Speech</div>
+                </div>
+
+                <div class="speech speech--right">
+                    <div class="speech_meta">
+                        <span class="speech_name">Conservative Agent</span>
+                        <span class="agent_tags">시장 자율 · 재정 건전성 · 제도 안정성 강조</span>
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--conservative">Speech</div>
+                </div>
+
+                <div class="speech speech--left">
+                    <div class="speech_meta">
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                        <span class="speech_name">Progressive Agent</span>
+                        <span class="agent_tags">공공성 · 형평성 · 제도 개선 강조</span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--progressive">Speech</div>
+                </div>
+
+                <div class="speech speech--right">
+                    <div class="speech_meta">
+                        <span class="speech_name">Conservative Agent</span>
+                        <span class="agent_tags">시장 자율 · 재정 건전성 · 제도 안정성 강조</span>
+                        <span class="agent_icon agent_icon--sm"><i class="fa-solid fa-user"></i></span>
+                    </div>
+                    <div class="speech_bubble speech_bubble--conservative">Speech</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="debate-summary">
+            <div class="section_head">
+                <h2>Debate Summary</h2>
+                <p>Progressive Agent와 Conservative Agent의 토론을 요약합니다.</p>
+            </div>
+
+            <div class="summary_grid">
+                <div class="summary_card summary_card--progressive">
+                    <div class="agent_card_head">
+                        <span class="agent_icon"><i class="fa-solid fa-user"></i></span>
+                        <div>
+                            <h3>Progressive Agent</h3>
+                            <span class="agent_tags">공공성 · 형평성 · 제도 개선 강조</span>
+                        </div>
+                    </div>
+                    <ul class="summary_list">
+                        <li>해당 소득 지지 정책은 사회적 형평성 개선에 기여할 수 있음을 강조하였다.</li>
+                        <li>해당 소득 지지 정책은 사회적 형평성 개선에 기여할 수 있음을 강조하였다.</li>
+                        <li>해당 소득 지지 정책은 사회적 형평성 개선에 기여할 수 있음을 강조하였다.</li>
+                    </ul>
+                </div>
+
+                <div class="summary_card summary_card--neutral">
+                    <div class="agent_card_head agent_card_head--center">
+                        <span class="agent_icon agent_icon--neutral"><i class="fa-solid fa-scale-balanced"></i></span>
+                        <div>
+                            <h3>핵심 쟁점</h3>
+                            <span class="agent_tags">공통 · 근본 쟁점</span>
+                        </div>
+                    </div>
+                    <ul class="summary_list">
+                        <li>해당 정책이 지속 가능한지 여부</li>
+                        <li>해당 정책이 지속 가능한지 여부</li>
+                        <li>해당 정책이 지속 가능한지 여부</li>
+                    </ul>
+                </div>
+
+                <div class="summary_card summary_card--conservative">
+                    <div class="agent_card_head">
+                        <span class="agent_icon"><i class="fa-solid fa-user"></i></span>
+                        <div>
+                            <h3>Conservative Agent</h3>
+                            <span class="agent_tags">시장 자율 · 재정 건전성 · 제도 안정성 강조</span>
+                        </div>
+                    </div>
+                    <ul class="summary_list">
+                        <li>재정 부담과 관련한 우려 한계 사항을 지적하며 반대 입장을 취하였다.</li>
+                        <li>재정 부담과 관련한 우려 한계 사항을 지적하며 반대 입장을 취하였다.</li>
+                        <li>재정 부담과 관련한 우려 한계 사항을 지적하며 반대 입장을 취하였다.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="debate_finished">
+                <span>Debate Finished</span>
+            </div>
+        </section>
+
+        <section class="section" id="new-debate">
+            <div class="section_head">
+                <h2>New Debate</h2>
+                <p>새로운 주제로 토론을 시작해보세요.</p>
+            </div>
+
+            <div class="search">
+                <form class="search_form">
+                    <i class="fa-solid fa-magnifying-glass search_icon"></i>
+                    <input type="search" placeholder="토론하고 싶은 정책 주제를 입력하세요.">
+                    <button type="submit" aria-label="검색">
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </button>
+                </form>
+
+                <div class="search_examples">
+                    <span class="search_label">주제 예시</span>
+                    <ul class="example_list">
+                        <li><button type="button">기본소득</button></li>
+                        <li><button type="button">의대정원</button></li>
+                        <li><button type="button">탄소세</button></li>
+                        <li><button type="button">기후변화</button></li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="footer">
+        <p class="footer_title">Policy Debate AI</p>
+        <p class="footer_copy">© 2026 Team NLP</p>
+    </footer>
+</body>
+</html>
