@@ -21,7 +21,7 @@
 | SFT용 LoRA 어댑터 (Kanana 기준) | ✅ LEFT/RIGHT 둘 다 완료, git에 커밋/push됨 | `adapters/left`, `adapters/right` |
 | `sft/train.py` — LoRA 대상 모듈 자동 탐색으로 리팩터링 | ✅ 실제 Kanana 모델로 검증 완료(아래 §4 참고, 원래 코드에서 몇 군데 수정 필요했음) | `sft/train.py` |
 | GRPO 보상 설계 v1(PDF 원안) / v2(재설계) | ✅ 완료 + 2026-07-04 정비(kiwi 형태소·bge-m3·anchor 임베딩평균·syc coverage 게이트) — **sanity check 전 항목 PASS** | `docs/reward_design_v2.md`, `rl/rewards/`, `rl/check_reward_sanity.py` |
-| GRPO 학습 파이프라인 (self-play rollout → GRPOTrainer) | ✅ 코드 정비 완료(bf16+vLLM 서버 모드), self-play 생성은 **vLLM 스모크 실측 검증됨**, ⚠️ GRPOTrainer 학습 루프 자체는 아직 스모크 전 | `rl/simulate_vllm.py`, `rl/rollout.py`, `rl/train_grpo.py` |
+| GRPO 학습 파이프라인 (self-play rollout → GRPOTrainer) | ✅ **LEFT/RIGHT 둘 다 실제 학습 완료** (2026-07-04, side당 15스텝/~65분, vLLM 서버 모드). 어댑터는 `adapters/{left,right}_grpo` (bf16 변환본), `model.yaml`에 반영됨. ⚠️ debate.py 정성 검증은 아직 | `rl/simulate_vllm.py`, `rl/rollout.py`, `rl/train_grpo.py` |
 | `check_server.py` — Kanana 기준 실행 가능 여부 체크 | ✅ Plan D로 추가됨, ⚠️ 실제 서버에서 실행 안 해봄 | `check_server.py` |
 
 ## 2. 지금 당장 서버에서 할 일 (순서대로)
@@ -118,6 +118,28 @@ python rl/train_grpo.py --side left --gpu 0 --use-vllm --transcripts rl/data/tra
 미구현으로 남긴 것: Diversity Pruning(inference-time, 중간발표 슬라이드 11) — 컨퍼런스에서
 질문 가능성 있으니 "향후 과제"로 정리해둘 것. R_grounding은 AI-Hub 국회 회의록 데이터에 BM25만
 붙이면 활성화 가능하나 일정상 보류.
+
+### 2026-07-04 GRPO 실행 결과 (완료)
+
+| 항목 | 실측 |
+|---|---|
+| 트랜스크립트 생성 (240턴 = 40토픽×3라운드×2side) | **~8분** (vLLM multi-LoRA 배치) |
+| GRPO 학습 | side당 15 optimizer step, 스텝당 ~255-270초 → **side당 ~65분** |
+| 보상 추이 | LEFT 1.0→1.26 범위 등락(약한 상승 경향), RIGHT ~1.0 부근 유지. 1 epoch·lr 1e-5·KL β 0.04의 보수적 설정이라 큰 변화는 아님 — 성향 강화가 부족하면 iterative self-play(§3의 5번) 또는 epoch/lr 상향 검토 |
+| KL / clip | kl 0.009~0.015, clip 비율 2~4% — 발산 없음 |
+| 산출물 | `adapters/left_grpo`, `adapters/right_grpo` (fp32 저장분을 bf16로 변환 — GitHub 100MB 제한 + 추론 dtype 일치. `ref/` 하위 폴더는 TRL이 저장한 KL 기준 어댑터 사본으로 git 제외) |
+
+**새로 발견한 관측 (§4에 추가할 리스크 성격):**
+- **vLLM(생성)과 HF 트레이너(logprob 재계산) 사이 토큰당 로그확률 차이가 큼** (mean ~0.7-0.9).
+  MoE는 커널 구현 간 미세한 수치 차이로 expert 라우팅이 갈리기 때문으로 보이며, TRL의
+  vLLM importance sampling correction이 보정한다 (kl·보상 추이 정상 확인). MoE 모델 RL의
+  실무적 난점 사례로 발표에서 언급할 만함.
+- 생성의 92~100%가 `max_new_tokens=600` 상한에 걸림(clipped) — 토론 발언이 원래 긴 스타일.
+  보상 계산에는 문제없으나, 완결된 발언을 원하면 max_new_tokens 상향 고려.
+
+**다음 세션이 할 일:** ① `python debate.py`로 GRPO 어댑터 정성 검증 (SFT 어댑터와 비교 —
+model.yaml 경로 바꿔가며 같은 주제 토론), ② readme.md의 검증 절차(스탠스 점수 유지력,
+중립 표현 빈도)로 정량 비교, ③ 필요시 iterative self-play 1회.
 
 ## 4. 알려진 리스크 / 이 세션이 검증하지 못한 것
 

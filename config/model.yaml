@@ -21,12 +21,14 @@ right_gpu: 1   # 🔴 RIGHT agent (박민준 교수, 보수)
 # 8bit/fp16은 30B 규모에서 24GB 한 장에 들어가지 않으므로 현재 사용 불가.
 quantization: "4bit"
 
-# ── SFT LoRA 어댑터 경로 ────────────────────────────────────
-# SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
-# 2026-07-03/04: Kanana 기준 재학습 완료 (LEFT loss 2.05→0.17, mean_token_accuracy 0.96 /
-# RIGHT loss 2.03→0.14, mean_token_accuracy 0.97).
-left_adapter:  "adapters/left"
-right_adapter: "adapters/right"
+# ── LoRA 어댑터 경로 ────────────────────────────────────────
+# 어댑터 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
+# 2026-07-03/04: SFT 완료 (LEFT loss 2.05→0.17 / RIGHT 2.03→0.14) → adapters/{left,right}
+# 2026-07-04: GRPO self-play RL 완료 (side당 15스텝/~65분, vLLM 서버 모드) → adapters/{left,right}_grpo
+#   ⚠️ GRPO 어댑터는 아직 debate.py 정성 검증 전. 문제가 보이면 아래를 SFT 경로
+#   ("adapters/left", "adapters/right")로 되돌리면 즉시 SFT 상태로 복귀한다.
+left_adapter:  "adapters/left_grpo"
+right_adapter: "adapters/right_grpo"
 
 # ── 텍스트 생성 파라미터 ────────────────────────────────────
 max_new_tokens: 600       # 응답 최대 토큰 수
