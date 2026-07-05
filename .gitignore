@@ -1,6 +1,7 @@
 # 학습된 모델/어댑터 (용량 큼, 재훈련으로 생성 가능)
 adapters/
 sft/data/
+rl/data/
 
 # 토론 로그
 logs/
@@ -19,3 +20,6 @@ __pycache__/
 
 # 기타
 *.png
+# 평가 데이터/생성 결과 (용량 큼, 재생성 가능)
+eval_data/
+eval_outputs/

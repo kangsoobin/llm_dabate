@@ -2,23 +2,34 @@
 #  LLM Debate 시스템 — 모델 및 생성 파라미터 설정
 # ============================================================
 
-# HuggingFace 모델 ID (첫 실행 시 ~29 GB 자동 다운로드)
-model_id: "Qwen/Qwen2.5-14B-Instruct"
+# HuggingFace 모델 ID
+# 2026-07-02: Qwen2.5-14B-Instruct(구 모델) → Kanana-2-30B-A3B-Instruct(카카오, 한국어 최신 모델)로 교체.
+# 아키텍처가 DeepseekV3ForCausalLM(MLA + MoE, 128 routed + 2 shared experts)로 Qwen과 완전히 다르므로
+# transformers==4.57.6 필요 (5.x는 MoE 구현이 달라서 못 씀 — HANDOFF.md §4-3 참고).
+# 2026-07-03/04: LEFT/RIGHT 모두 Kanana 기준 SFT 재학습 완료, 아래 경로 반영됨.
+model_id: "kakaocorp/kanana-2-30b-a3b-instruct"
 
 # GPU 할당 (0-based index)
 left_gpu: 0    # 🔵 LEFT agent (이진영 교수, 진보)
 right_gpu: 1   # 🔴 RIGHT agent (박민준 교수, 보수)
 
 # 양자화 방식: "4bit" | "8bit" | "fp16"
-# 4bit: ~9 GB VRAM, 속도 빠름  (권장)
-# 8bit: ~14 GB VRAM, 품질 약간 우수
-# fp16: ~28 GB VRAM, 최고 품질 (RTX 3090 24GB 초과로 불가)
+# Kanana-2-30B-A3B는 총 30B 파라미터(MoE, 활성 파라미터는 3B) — 4bit(NF4) 기준 가중치만 약 16GB.
+# 3090 24GB 한 장에 inference는 들어가지만, QLoRA 학습 시 옵티마이저 상태·활성화 메모리가 더해지므로
+# 이전 14B 대비 여유가 훨씬 빠듯하다. OOM 시 sft/train.py의 --gpu 옵션으로 여유 GPU를 배정하거나
+# gradient_checkpointing/배치 크기를 더 낮출 것.
+# 8bit/fp16은 30B 규모에서 24GB 한 장에 들어가지 않으므로 현재 사용 불가.
 quantization: "4bit"
 
-# ── SFT LoRA 어댑터 경로 ────────────────────────────────────
-# SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
-left_adapter:  "adapters/left"
-right_adapter: "adapters/right"
+# ── LoRA 어댑터 경로 ────────────────────────────────────────
+# 어댑터 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
+# 2026-07-03/04: SFT 완료 (LEFT loss 2.05→0.17 / RIGHT 2.03→0.14) → adapters/{left,right}
+# 2026-07-04/05: Kanana SFT adapter에서 GRPO v3 장기 학습 완료.
+#   LEFT: 128 steps, G=9, max_completion=96. 보존 후보 중 checkpoint-112가 보상 균형 최상.
+#   RIGHT: 128 steps, G=8, max_completion=96. 보존 후보 중 checkpoint-120이 보상 균형 최상.
+#   문제가 보이면 아래를 최종 128 경로 또는 SFT 경로("adapters/left", "adapters/right")로 되돌릴 것.
+left_adapter:  "adapters/left_grpo_v3_left_long_g9/checkpoint-112"
+right_adapter: "adapters/right_grpo_v3_right_long_g8/checkpoint-120"
 
 # ── 텍스트 생성 파라미터 ────────────────────────────────────
 max_new_tokens: 600       # 응답 최대 토큰 수

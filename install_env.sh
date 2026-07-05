@@ -85,7 +85,7 @@ EOF
 # ── HuggingFace 핵심 라이브러리 ─────────────────────────────
 step "transformers / accelerate / bitsandbytes 설치"
 pip install \
-    "transformers>=4.45.0" \
+    "transformers>=4.51.0" \
     "accelerate>=0.34.0" \
     "bitsandbytes>=0.44.0" \
     sentencepiece \

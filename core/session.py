@@ -14,9 +14,8 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from agents.base_agent import BaseAgent
 from core.display import (
     print_round_header,
     print_agent_header,
@@ -24,6 +23,51 @@ from core.display import (
     print_system,
     make_stream_callback,
 )
+
+if TYPE_CHECKING:
+    from agents.base_agent import BaseAgent
+
+
+def build_debate_message(
+    question: str,
+    opponent_response: str,
+    opponent_name: str,
+    speaker_side: str,          # "left" or "right"
+    is_closing: bool = False,
+) -> str:
+    """
+    사회자 질문에 상대방의 직전 발언을 주입한 메시지를 생성한다.
+    상대 발언이 없으면(첫 발언 등) 질문만 반환한다.
+
+    모듈 함수로 분리한 이유: rl/simulate_vllm.py처럼 BaseAgent(HF 모델 로딩)를 쓰지 않는
+    파이프라인에서도 동일한 프롬프트 포맷을 재사용하기 위함 — 여기 포맷이 바뀌면
+    토론 UI·self-play 데이터 생성이 전부 같이 바뀌어야 하므로 반드시 이 함수 한 곳만 수정할 것.
+    """
+    if not opponent_response:
+        return question
+
+    opponent_label = "우파" if speaker_side == "left" else "좌파"
+    own_label      = "진보" if speaker_side == "left" else "보수"
+
+    if is_closing:
+        instruction = (
+            f"지금까지의 토론을 마무리하며, {own_label}적 관점에서 "
+            f"핵심 주장을 간결하게 정리하고 최종 발언을 하라."
+        )
+    else:
+        instruction = (
+            f"위 {opponent_label}의 주장을 정면으로 반박하고, "
+            f"{own_label}적 관점에서 사회자의 질문에 답하라."
+        )
+
+    return (
+        f"사회자 질문: {question}\n\n"
+        f"{'━' * 40}\n"
+        f"방금 {opponent_label}({opponent_name})이(가) 한 발언:\n"
+        f"{opponent_response}\n"
+        f"{'━' * 40}\n\n"
+        f"{instruction}"
+    )
 
 
 class DebateSession:
@@ -61,36 +105,8 @@ class DebateSession:
         speaker_side: str,          # "left" or "right"
         is_closing: bool = False,
     ) -> str:
-        """
-        사회자 질문에 상대방의 직전 발언을 주입한 메시지를 생성한다.
-
-        상대 발언이 없으면(첫 발언 등) 질문만 반환한다.
-        """
-        if not opponent_response:
-            return question
-
-        opponent_label = "우파" if speaker_side == "left" else "좌파"
-        own_label      = "진보" if speaker_side == "left" else "보수"
-
-        if is_closing:
-            instruction = (
-                f"지금까지의 토론을 마무리하며, {own_label}적 관점에서 "
-                f"핵심 주장을 간결하게 정리하고 최종 발언을 하라."
-            )
-        else:
-            instruction = (
-                f"위 {opponent_label}의 주장을 정면으로 반박하고, "
-                f"{own_label}적 관점에서 사회자의 질문에 답하라."
-            )
-
-        return (
-            f"사회자 질문: {question}\n\n"
-            f"{'━' * 40}\n"
-            f"방금 {opponent_label}({opponent_name})이(가) 한 발언:\n"
-            f"{opponent_response}\n"
-            f"{'━' * 40}\n\n"
-            f"{instruction}"
-        )
+        """모듈 함수 build_debate_message로 위임 (포맷 정의는 그쪽 한 곳에만 둔다)."""
+        return build_debate_message(question, opponent_response, opponent_name, speaker_side, is_closing)
 
     # ─────────────────────────────────────────────────────────
     # 공개 API
