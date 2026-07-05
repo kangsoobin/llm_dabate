@@ -1,7 +1,7 @@
 """
 rl/rewards/composer.py
 ─────────────────────────
-config/reward.yaml의 version(v1|v2)에 따라 컴포넌트를 조립하고,
+config/reward.yaml의 version(v1|v2|v3)에 따라 컴포넌트를 조립하고,
 TRL GRPOTrainer가 요구하는 reward_func(prompts, completions, **kwargs) -> list[float]
 시그니처로 감싼다.
 """
@@ -12,6 +12,7 @@ from .base import DebateTurnSample
 from .judge import build_judge
 from .v1_pdf import build_v1_components
 from .v2_redesign import build_v2_components
+from .v3_multiagent import build_v3_components
 
 
 class RewardComposer:
@@ -37,8 +38,10 @@ class RewardComposer:
             components = build_v1_components(judge, section)
         elif version == "v2":
             components = build_v2_components(judge, section)
+        elif version == "v3":
+            components = build_v3_components(judge, section)
         else:
-            raise ValueError(f"알 수 없는 reward version: {version!r} (v1|v2 중 하나여야 함)")
+            raise ValueError(f"알 수 없는 reward version: {version!r} (v1|v2|v3 중 하나여야 함)")
         return cls(components)
 
     @staticmethod

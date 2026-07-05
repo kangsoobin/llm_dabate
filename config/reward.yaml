@@ -1,10 +1,10 @@
 # ============================================================
 #  GRPO 보상 설계 설정
-#  version: v1 (보상 설계.pdf 원안) | v2 (docs/reward_design_v2.md 재설계, 기본값)
+#  version: v1 (보상 설계.pdf 원안) | v2 (docs/reward_design_v2.md 재설계) | v3 (성향 유지/반박 품질/토론 전개 3축 강화, 기본값)
 #  rl/train_grpo.py --reward-version 플래그로 이 파일의 version을 덮어쓸 수 있다.
 # ============================================================
 
-version: "v2"
+version: "v3"
 
 # ── Judge 모델 설정 ──────────────────────────────────────────
 # backend: "none" | "local" | "api"
@@ -58,6 +58,47 @@ v2:
     gamma: 1.5
   # R_persona anchor: rl/build_anchor.py --side {left,right} 실행이 아래 파일을 생성한다.
   # (샘플 텍스트 리스트 → 각각 임베딩 후 평균. 파일이 없으면 학습 시작 시 에러로 막음.)
+  anchor_files:
+    left: "rl/data/anchors/left.json"
+    right: "rl/data/anchors/right.json"
+
+
+# ── v3: v2 + 성향 유지/반박 품질/토론 전개 3축 강화 ─────────
+v3:
+  embedding_model: "BAAI/bge-m3"
+  weights:
+    # 1) 성향 유지: SFT adapter가 만든 정치적 정체성에서 벗어나지 않기
+    stance_alignment: 1.0
+    # 2) 반박 품질: 상대 논점을 잡고 정면으로 반박하기
+    issue_coverage: 1.1
+    direct_rebuttal: 0.5
+    # 3) 토론 전개: 반복/수렴을 줄이고 새 논점으로 진행하기
+    semantic_distinctiveness: 1.0
+    argument_advancement: 0.6
+    lexical_anti_repetition: 0.4
+    late_loop_penalty: 0.7
+    # 4) 근거 충실도: RAG/NLI 붙기 전까지 비활성
+    evidence_grounding: 0.0
+  stance_alignment:
+    lambda_syc: 1.0
+    syc_coverage_gate: true
+    judge_aux_weight: 0.0
+  issue_coverage:
+    judge_weight: 0.0
+  direct_rebuttal:
+    cue_weight: 0.35
+  argument_advancement:
+    min_round: 2
+    coverage_floor: 0.25
+  lexical_anti_repetition:
+    tau: 0.25
+    gamma: 1.5
+  late_loop_penalty:
+    late_start: 4
+    tau: 0.18
+    gamma: 2.5
+  # v2와 동일하게 anchor_files가 있으면 우선 사용한다. 없으면 rl/rewards/v2_redesign.py가
+  # config/prompts.yaml + 대표 페르소나 발화 샘플로 fallback anchor를 만든다.
   anchor_files:
     left: "rl/data/anchors/left.json"
     right: "rl/data/anchors/right.json"

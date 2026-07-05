@@ -177,6 +177,8 @@ def _load_anchor_texts(cfg: dict, base_dir: str | None = None) -> dict[str, list
     anchor 텍스트 로드. 우선순위:
     1. cfg["anchor_files"] — rl/build_anchor.py가 생성한 side별 JSON(list[str]) 파일 경로
     2. cfg["anchor_texts"] — yaml에 직접 넣은 문자열/리스트 (하위 호환)
+    3. config/prompts.yaml의 페르소나 설명 — 원격 학습 job처럼 sft/data와 anchor 파일이
+       없는 환경에서 fail-safe로 사용
     """
     import json
     import os
@@ -195,8 +197,44 @@ def _load_anchor_texts(cfg: dict, base_dir: str | None = None) -> dict[str, list
                     result[side] = json.load(f)
                 continue
         fallback = (cfg.get("anchor_texts") or {}).get(side, "")
-        result[side] = [fallback] if isinstance(fallback, str) else list(fallback)
+        if fallback:
+            result[side] = [fallback] if isinstance(fallback, str) else list(fallback)
+            continue
+        result[side] = _prompt_anchor_fallback(side, base_dir)
     return result
+
+
+def _prompt_anchor_fallback(side: str, base_dir: str) -> list[str]:
+    """
+    sft/data와 rl/data/anchors가 없는 원격 실행 환경에서 쓰는 안전한 fallback.
+    시스템 프롬프트 전체와 대표 발화 샘플을 함께 넣어 instruction 문체와 실제 발화 문체의
+    간극을 줄인다. SFT 데이터 기반 anchor가 있으면 그쪽이 항상 우선한다.
+    """
+    import os
+
+    try:
+        import yaml
+
+        with open(os.path.join(base_dir, "config", "prompts.yaml"), encoding="utf-8") as f:
+            prompt_text = (yaml.safe_load(f) or {}).get(side, "")
+    except Exception:
+        prompt_text = ""
+
+    samples = {
+        "left": [
+            "서민과 노동자의 삶을 지키려면 재벌 중심 경제 구조를 개혁하고 공공성을 강화해야 합니다.",
+            "국민의힘식 감세와 규제완화는 결국 부자와 대기업에게 혜택을 몰아주는 정책입니다.",
+            "민생을 외면한 시장만능주의로는 불평등과 비정규직 문제를 해결할 수 없습니다.",
+            "복지와 공공의료, 공교육 확대는 비용이 아니라 국민의 삶을 지키는 투자입니다.",
+        ],
+        "right": [
+            "기업이 살아야 일자리가 생기고 성장 기반이 있어야 복지 재원도 마련됩니다.",
+            "민주당식 퍼주기와 과도한 규제는 투자 의지를 꺾고 결국 서민 일자리까지 줄입니다.",
+            "재정 건전성과 시장 원리를 무시한 정책은 미래 세대에게 부담을 떠넘기는 포퓰리즘입니다.",
+            "안보와 한미동맹, 기업 자율성은 대한민국 경제와 국민 생활을 지키는 현실적 기반입니다.",
+        ],
+    }
+    return ([prompt_text] if prompt_text else []) + samples[side]
 
 
 def build_v2_components(judge: Optional[Judge], cfg: dict) -> list[tuple]:

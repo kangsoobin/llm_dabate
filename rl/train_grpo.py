@@ -63,8 +63,15 @@ def train(
     vllm_host: str,
     vllm_port: int,
     group_size: int,
+    gradient_accumulation_steps: int,
+    generation_batch_size: int | None,
+    learning_rate: float,
+    max_completion_length: int | None,
     max_steps: int | None,
+    save_steps: int | None,
     transcript_path: str,
+    output_suffix: str,
+    init_adapter: str | None,
 ) -> None:
     import torch
     from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training
@@ -85,8 +92,10 @@ def train(
     reward_cfg["version"] = reward_version
 
     model_id = model_cfg["model_id"]
-    sft_adapter = os.path.join(BASE_DIR, model_cfg.get(f"{side}_adapter") or f"adapters/{side}")
-    output_dir = os.path.join(BASE_DIR, "adapters", f"{side}_grpo")
+    adapter_source = init_adapter or model_cfg.get(f"{side}_adapter") or f"adapters/{side}"
+    sft_adapter = adapter_source if os.path.isabs(adapter_source) else os.path.join(BASE_DIR, adapter_source)
+    suffix = output_suffix.strip("_/ ") or "grpo"
+    output_dir = os.path.join(BASE_DIR, "adapters", f"{side}_{suffix}")
 
     print(f"\n[{side.upper()}] GRPO 학습 시작 (reward={reward_version}, precision={precision}, vllm={use_vllm})")
 
@@ -145,17 +154,18 @@ def train(
         output_dir=output_dir,
         num_generations=group_size,
         per_device_train_batch_size=group_size,
-        gradient_accumulation_steps=8,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        generation_batch_size=generation_batch_size,
         num_train_epochs=1,
         max_steps=max_steps if max_steps is not None else -1,
-        learning_rate=1e-5,
+        learning_rate=learning_rate,
         beta=0.04,              # KL 페널티 계수 β (docs/reward_design_v2.md §4)
         epsilon=0.2,            # 클리핑 ε
         # TRL 1.7은 max_prompt_length(프롬프트 잘라내기)가 없다 — 컨텍스트 상한은 vLLM 쪽
         # max_model_len으로 관리한다. 프롬프트 = [system(페르소나)] + 라운드별 히스토리라
         # 3라운드 기준 최대 ~4천 토큰까지 자랄 수 있으니, trl vllm-serve의 --max_model_len을
         # "데이터셋 최대 프롬프트 + max_completion_length" 이상으로 띄울 것 (HANDOFF.md §3).
-        max_completion_length=model_cfg.get("max_new_tokens", 600),
+        max_completion_length=max_completion_length or model_cfg.get("max_new_tokens", 600),
         temperature=model_cfg.get("temperature", 0.8),
         bf16=True,
         gradient_checkpointing=True,
@@ -164,7 +174,10 @@ def train(
         vllm_server_host=vllm_host,
         vllm_server_port=vllm_port,
         logging_steps=1,
-        save_strategy="no",
+        save_strategy="steps" if save_steps else "no",
+        save_steps=save_steps or 500,
+        save_total_limit=3 if save_steps else None,
+        save_only_model=True,
         report_to="none",
     )
 
@@ -192,24 +205,63 @@ def train(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GRPO 기반 RL 파인튜닝")
     parser.add_argument("--side", choices=["left", "right"], required=True)
-    parser.add_argument("--reward-version", choices=["v1", "v2"], default="v2")
+    parser.add_argument("--reward-version", choices=["v1", "v2", "v3"], default="v3")
     parser.add_argument("--gpu", type=int, default=None,
                         help="학습에 쓸 물리 GPU 번호 (프로세스에 이 GPU만 보이도록 제한됨)")
     parser.add_argument("--precision", choices=["bf16", "4bit"], default="bf16",
-                        help="bf16(기본, 97GB GPU 기준 권장) | 4bit(작은 GPU fallback)")
+                        help="bf16(기본, 97GB GPU 기준 권장) | 4bit(단일 GPU/작은 GPU fallback)")
     parser.add_argument("--use-vllm", action="store_true",
                         help="TRL vLLM 서버 모드로 생성 가속 (별도 GPU에 trl vllm-serve 필요)")
     parser.add_argument("--vllm-host", default="0.0.0.0")
     parser.add_argument("--vllm-port", type=int, default=8000)
     parser.add_argument("--group-size", type=int, default=8, help="GRPO 그룹당 샘플 수 G")
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
+    parser.add_argument(
+        "--generation-batch-size",
+        type=int,
+        default=None,
+        help=(
+            "한 번에 생성/채점할 completion 수. None이면 TRL이 grad_accum만큼 묶어 "
+            "메모리가 커질 수 있으므로 no-vLLM 단일 GPU에서는 group-size와 같게 둔다."
+        ),
+    )
+    parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--max-completion-length", type=int, default=None,
+                        help="메모리/속도 제어용 completion 길이 override. 단일 GPU는 256~384 권장")
+    parser.add_argument("--single-gpu", action="store_true",
+                        help="GPU 1장용 안전 프리셋: 4bit, no-vLLM, G=4, completion=384, grad_accum=16")
     parser.add_argument("--max-steps", type=int, default=None,
-                        help="옵티마이저 스텝 상한 (스모크 테스트용, 기본: 1 epoch 전체)")
+                        help="옵티마이저 스텝 상한 (기본: 1 epoch 전체)")
+    parser.add_argument("--save-steps", type=int, default=None,
+                        help="장시간 학습 중 adapter 체크포인트 저장 주기. 예: 32")
     parser.add_argument(
         "--transcripts",
         default=os.path.join("rl", "data", "transcripts.jsonl"),
         help="rl/simulate*.py가 생성한 트랜스크립트 경로",
     )
+    parser.add_argument(
+        "--output-suffix",
+        default="grpo_v3",
+        help="adapters/{side}_{suffix}에 저장한다. v2 재현은 grpo, v3 실험은 grpo_v3 권장",
+    )
+    parser.add_argument(
+        "--init-adapter",
+        default=None,
+        help="이어 학습할 시작 LoRA adapter 경로. v3 본학습은 adapters/{side} SFT adapter 명시 권장",
+    )
     args = parser.parse_args()
+
+    if args.single_gpu:
+        args.precision = "4bit"
+        args.use_vllm = False
+        if args.group_size == 8:
+            args.group_size = 4
+        if args.gradient_accumulation_steps == 8:
+            args.gradient_accumulation_steps = 16
+        if args.max_completion_length is None:
+            args.max_completion_length = 384
+        if args.generation_batch_size is None:
+            args.generation_batch_size = args.group_size
 
     if args.gpu is None:
         with open(os.path.join(BASE_DIR, "config", "model.yaml"), encoding="utf-8") as f:
@@ -233,6 +285,13 @@ if __name__ == "__main__":
         vllm_host=args.vllm_host,
         vllm_port=args.vllm_port,
         group_size=args.group_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        generation_batch_size=args.generation_batch_size,
+        learning_rate=args.learning_rate,
+        max_completion_length=args.max_completion_length,
         max_steps=args.max_steps,
+        save_steps=args.save_steps,
         transcript_path=transcript_path,
+        output_suffix=args.output_suffix,
+        init_adapter=args.init_adapter,
     )

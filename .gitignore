@@ -20,3 +20,6 @@ __pycache__/
 
 # 기타
 *.png
+# 평가 데이터/생성 결과 (용량 큼, 재생성 가능)
+eval_data/
+eval_outputs/

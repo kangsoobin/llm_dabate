@@ -24,11 +24,12 @@ quantization: "4bit"
 # ── LoRA 어댑터 경로 ────────────────────────────────────────
 # 어댑터 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
 # 2026-07-03/04: SFT 완료 (LEFT loss 2.05→0.17 / RIGHT 2.03→0.14) → adapters/{left,right}
-# 2026-07-04: GRPO self-play RL 완료 (side당 15스텝/~65분, vLLM 서버 모드) → adapters/{left,right}_grpo
-#   ⚠️ GRPO 어댑터는 아직 debate.py 정성 검증 전. 문제가 보이면 아래를 SFT 경로
-#   ("adapters/left", "adapters/right")로 되돌리면 즉시 SFT 상태로 복귀한다.
-left_adapter:  "adapters/left_grpo"
-right_adapter: "adapters/right_grpo"
+# 2026-07-04/05: Kanana SFT adapter에서 GRPO v3 장기 학습 완료.
+#   LEFT: 128 steps, G=9, max_completion=96. 보존 후보 중 checkpoint-112가 보상 균형 최상.
+#   RIGHT: 128 steps, G=8, max_completion=96. 보존 후보 중 checkpoint-120이 보상 균형 최상.
+#   문제가 보이면 아래를 최종 128 경로 또는 SFT 경로("adapters/left", "adapters/right")로 되돌릴 것.
+left_adapter:  "adapters/left_grpo_v3_left_long_g9/checkpoint-112"
+right_adapter: "adapters/right_grpo_v3_right_long_g8/checkpoint-120"
 
 # ── 텍스트 생성 파라미터 ────────────────────────────────────
 max_new_tokens: 600       # 응답 최대 토큰 수

@@ -39,8 +39,14 @@ if BASE_DIR not in sys.path:
 
 import yaml  # noqa: E402
 
+from rl.rewards.base import DebateTurnSample  # noqa: E402
 from rl.rewards.utils import SentenceEmbedder, key_point_coverage  # noqa: E402
 from rl.rewards.v2_redesign import _load_anchor_texts  # noqa: E402
+from rl.rewards.v3_multiagent import (  # noqa: E402
+    ArgumentProgressionReward,
+    CounterArgumentReward,
+    LateRoundRepetitionPenalty,
+)
 
 N_SAMPLES = 40
 MARGIN = 0.03  # 평균 cos-sim 분리 최소 마진 (bge 계열은 유사도 분포가 좁아 절대값은 작게 설정)
@@ -61,6 +67,8 @@ NEUTRAL_RESPONSES = [
 def load_sft_records(side: str, n: int, seed: int = 42) -> list[dict]:
     """sft/data/{side}_train.jsonl에서 (question, response) 레코드 n개 샘플링."""
     path = os.path.join(BASE_DIR, "sft", "data", f"{side}_train.jsonl")
+    if not os.path.exists(path):
+        return []
     records = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -115,18 +123,60 @@ def check_engagement_coverage(left, right) -> list[tuple[str, bool, str]]:
     return [("R_engagement coverage: 같은 질문 쌍 > 다른 질문 쌍", ok, detail)]
 
 
+def check_v3_handcrafted() -> list[tuple[str, bool, str]]:
+    opponent = "최저임금 인상은 자영업자의 인건비 부담과 고용 감소를 초래합니다."
+    direct = "인건비 부담을 말씀하시지만 문제는 임대료와 플랫폼 수수료입니다. 실제로 최저임금 인상분은 정부 지원과 공정거래 강화로 보완할 수 있고, 고용 감소 주장은 과장됐습니다."
+    evasive = "서민의 삶을 지키는 정치는 언제나 중요합니다. 우리는 더 정의로운 사회와 따뜻한 공동체를 만들어야 합니다."
+    history = ["최저임금은 서민의 삶을 지키는 최소한의 안전망이며 노동자의 생계를 위해 반드시 필요합니다."]
+    repeated = "최저임금은 서민의 삶을 지키는 최소한의 안전망이며 노동자의 생계를 위해 반드시 필요합니다."
+
+    counter = CounterArgumentReward()
+    progression = ArgumentProgressionReward(min_round=2)
+    late = LateRoundRepetitionPenalty(late_start=4)
+
+    direct_sample = DebateTurnSample(direct, "left", "최저임금", opponent, history, round_num=4)
+    evasive_sample = DebateTurnSample(evasive, "left", "최저임금", opponent, history, round_num=4)
+    repeated_sample = DebateTurnSample(repeated, "left", "최저임금", opponent, history, round_num=5)
+
+    counter_direct = counter(direct_sample)
+    counter_evasive = counter(evasive_sample)
+    prog_direct = progression(direct_sample)
+    prog_repeated = progression(repeated_sample)
+    late_repeated = late(repeated_sample)
+
+    return [
+        (
+            "R_direct_rebuttal: 정면반박 샘플 > 회피 샘플",
+            counter_direct > counter_evasive + 0.15,
+            f"direct={counter_direct:.4f}  evasive={counter_evasive:.4f}",
+        ),
+        (
+            "R_argument_advancement: 새 논점 전개 > 자기 반복",
+            prog_direct > prog_repeated + 0.10,
+            f"direct={prog_direct:.4f}  repeated={prog_repeated:.4f}",
+        ),
+        (
+            "R_late_loop_penalty: 5라운드 반복 발언 패널티",
+            late_repeated < 0.0,
+            f"late_repeated={late_repeated:.4f}",
+        ),
+    ]
+
+
 def main() -> None:
     with open(os.path.join(BASE_DIR, "config", "reward.yaml"), encoding="utf-8") as f:
         reward_cfg = yaml.safe_load(f)
-    v2_cfg = reward_cfg.get("v2", {})
+    version = reward_cfg.get("version", "v3")
+    active_cfg = reward_cfg.get(version, reward_cfg.get("v2", {}))
 
-    anchors = _load_anchor_texts(v2_cfg, BASE_DIR)
+    anchors = _load_anchor_texts(active_cfg, BASE_DIR)
     for side in ("left", "right"):
         if not any(t.strip() for t in anchors.get(side, [])):
             print(f"[오류] {side} anchor가 없습니다 — 먼저 `python rl/build_anchor.py --side {side}` 실행")
             sys.exit(1)
 
-    embedder = SentenceEmbedder(model_id=v2_cfg.get("embedding_model", "BAAI/bge-m3"))
+    embedder = SentenceEmbedder(model_id=active_cfg.get("embedding_model", "BAAI/bge-m3"))
+    print(f"reward version: {version}")
     print(f"임베딩 모델: {embedder.model_id}")
 
     left = load_sft_records("left", N_SAMPLES)
@@ -134,8 +184,13 @@ def main() -> None:
     print(f"SFT 샘플: LEFT {len(left)}개 / RIGHT {len(right)}개, 중립 문장 {len(NEUTRAL_RESPONSES)}개\n")
 
     results = []
-    results += check_persona_drift(embedder, anchors, left, right)
-    results += check_engagement_coverage(left, right)
+    if left and right:
+        results += check_persona_drift(embedder, anchors, left, right)
+        results += check_engagement_coverage(left, right)
+    else:
+        print("[경고] sft/data/*.jsonl이 없어 SFT 통계 검증은 건너뜁니다. fallback anchor와 v3 수작업 샘플만 확인합니다.\n")
+    if version == "v3":
+        results += check_v3_handcrafted()
 
     print("─" * 72)
     n_fail = 0
