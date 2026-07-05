@@ -2,21 +2,34 @@
 #  LLM Debate 시스템 — 모델 및 생성 파라미터 설정
 # ============================================================
 
-# HuggingFace 모델 ID (첫 실행 시 ~29 GB 자동 다운로드)
-model_id: "Qwen/Qwen2.5-14B-Instruct"
+# HuggingFace 모델 ID
+# 2026-07-04: Qwen2.5-14B-Instruct → kakaocorp/kanana-2-30b-a3b-instruct 로 교체
+# (github.com/kangsoobin/llm_dabate jaeeun 브랜치의 어댑터를 가져오며 함께 전환).
+# 아키텍처가 DeepseekV3ForCausalLM(MLA + MoE, 128 routed + 2 shared experts)로 Qwen과 완전히 다름.
+# ⚠️ transformers 5.x에서는 MoE expert가 fused nn.Parameter로 구현되어 bnb 4bit 양자화가 안 먹혀
+#    OOM이 난다. 반드시 transformers==4.57.6(5.0 미만)으로 낮춰야 로드 가능 — rl/model_utils.py의
+#    assert_transformers_version()이 이 조건을 로드 전에 검사해 잘못된 버전이면 즉시 에러를 낸다.
+model_id: "kakaocorp/kanana-2-30b-a3b-instruct"
 
 # GPU 할당 (0-based index)
+# ⚠️ 2026-07-04 실측: Kanana 4bit는 bnb가 routed expert를 양자화 못 해 인스턴스 1개당 실제로는
+#    24GB를 훌쩍 넘는 메모리가 필요하다 (RTX 3090 24GB 단일 GPU 로딩 테스트에서 로딩 도중 OOM
+#    확인됨). rl/ 스크립트(오프라인 롤아웃 생성·GRPO 학습·평가)는 rl/config.yaml의
+#    left_gpus/right_gpus(리스트)로 여러 GPU에 걸쳐 로드할 수 있다 — 여기 아래 값은 터미널/
+#    Streamlit 실시간 토론 앱(debate.py, app.py) 전용 단일 GPU 배정이며, 다른 서버로 옮길 때
+#    그 서버가 인스턴스 1개를 한 장에 못 담으면 이 값들을 실사용 전에 재검토해야 한다.
+# 2026-07-04 vast.ai RTX PRO 6000 96GB 단일 GPU 서버: 두 인스턴스를 GPU 0에 함께 로드
 left_gpu: 0    # 🔵 LEFT agent (이진영 교수, 진보)
-right_gpu: 1   # 🔴 RIGHT agent (박민준 교수, 보수)
+right_gpu: 0   # 🔴 RIGHT agent (박민준 교수, 보수)
 
 # 양자화 방식: "4bit" | "8bit" | "fp16"
-# 4bit: ~9 GB VRAM, 속도 빠름  (권장)
-# 8bit: ~14 GB VRAM, 품질 약간 우수
-# fp16: ~28 GB VRAM, 최고 품질 (RTX 3090 24GB 초과로 불가)
+# Kanana-2-30B-A3B는 총 30B(MoE, 활성 파라미터 3B). "4bit"으로 설정해도 bnb가 routed expert를
+# 양자화하지 못해(위 참고) 실제 메모리 사용량은 bf16 풀사이즈에 가깝다 — left_gpus/right_gpus를
+# 넉넉하게(또는 여러 장으로) 잡을 것. 8bit/fp16은 사실상 4bit보다 더 크게 필요하므로 권장 안 함.
 quantization: "4bit"
 
-# ── SFT LoRA 어댑터 경로 ────────────────────────────────────
-# SFT 완료 후 경로를 입력하면 자동 로드. null이면 어댑터 미사용.
+# ── LoRA 어댑터 경로 ────────────────────────────────────────
+# jaeeun 브랜치에서 가져온 Kanana 기준 SFT 어댑터. null이면 어댑터 미사용.
 left_adapter:  "adapters/left"
 right_adapter: "adapters/right"
 

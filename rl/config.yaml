@@ -1,0 +1,78 @@
+# ============================================================
+#  GRPO 강화학습 설정 — 하이퍼파라미터와 보상 가중치를 한 곳에서 관리
+#  (2026-07-04, Kanana 전환 + 보상 고도화 반영)
+# ============================================================
+
+# ── Judge ───────────────────────────────────────────────────
+judge_model_id: "Qwen/Qwen2.5-7B-Instruct"
+judge_max_new_tokens: 64
+judge_batch_size: 16          # 한 번에 채점할 항목 수
+
+# 반박 품질 채점 방식 (arXiv:2605.28313 Pairwise Bradley-Terry 차용)
+#   pairwise : judge가 그룹 내 답변 쌍을 비교 → Bradley-Terry 집계 (기본, 권장)
+#   absolute : 기존 1~5 절대 점수 → (Q-1)/4
+rebuttal_mode: "pairwise"
+rebuttal_pairwise_max_pairs: 28   # 그룹당 최대 비교 쌍 수 (G=8이면 전체 조합 = 28)
+
+# 불확실성 라우팅 (arXiv:2510.20369 차용) — 로컬 judge의 stance가 중립 근처이거나
+# 파싱 실패한 샘플만 외부 API judge로 재채점. API 키 없으면 자동으로 로컬 전용 동작.
+judge_routing:
+  enabled: false
+  provider: "anthropic"            # anthropic | openai
+  model: "claude-haiku-4-5-20251001"
+  api_key_env: "ANTHROPIC_API_KEY"
+  stance_uncertain_below: 0.3      # |stance| < 이 값이면 재채점
+
+# ── 임베딩 (reward_persona / reward_semantic_echo 공유) ─────
+embedding_model: "jhgan/ko-sroberta-multitask"
+semantic_echo_tau: 0.75       # 코사인 유사도 허용 임계값 (이상이면 패널티)
+semantic_echo_gamma: 1.0      # 패널티 강도
+
+# ── 프롬프트 데이터셋 (build_prompts.py) ────────────────────
+n_heldout: 10                 # 평가용 홀드아웃 질문 수 (10칸 간격 층화 추출)
+n_seeds: 1                    # 질문당 미니 토론 반복 수
+seed_temperatures: [1.0, 0.8] # 시드별 생성 temperature (n_seeds개만 사용)
+debate_rounds: 3              # 미니 토론 라운드 수
+offline_max_new_tokens: 320   # 오프라인 상대 발언 생성 길이
+opponent_trim_sentences: 3    # 프롬프트에 주입할 상대 발언 문장 수 제한
+max_prompt_tokens: 1400       # 프롬프트 토큰 하드캡 (trl 1.5.1은 프롬프트를 안 자름)
+
+# ── GPU 배치 (train_grpo.py) ────────────────────────────────
+# Kanana-2-30B-A3B는 bnb 4bit이 routed expert를 양자화 못 해 인스턴스 1개가 24GB를 훌쩍
+# 넘는다(2026-07-04 실측 — 3090 24GB 단일 로딩 OOM). 새 서버의 GPU 용량에 맞게 조정할 것:
+# 한 장으로 충분(80GB+급)하면 [0], 부족하면 [0, 1]처럼 여러 장을 나열해 자동 분산.
+# 2026-07-04 vast.ai RTX PRO 6000 96GB 단일 GPU 서버 기준: 전부 GPU 0 공유
+# (train_grpo._setup_env가 judge_gpu==학습 GPU면 같은 GPU에 Judge를 함께 올린다)
+left_gpus:  [0]               # LEFT 학습 시 정책 모델이 쓸 물리 GPU 목록
+right_gpus: [0]               # RIGHT 학습 시 정책 모델이 쓸 물리 GPU 목록
+judge_gpu: 0                  # Judge(7B)용 물리 GPU. "auto"면 반대편 side의 첫 GPU 사용
+
+# ── GRPO 학습 (train_grpo.py) ───────────────────────────────
+max_steps: 150
+learning_rate: 1.0e-5         # LoRA 스케일 (trl 기본 1e-6은 풀FT 스케일)
+warmup_steps: 10
+per_device_train_batch_size: 1   # Qwen 시절 24GB에서 2는 OOM. 큰 GPU면 2로 올려도 됨
+gradient_accumulation_steps: 8   # generation_batch_size = 1×8 = 8 시퀀스 (프롬프트 1개 × 8 생성)
+num_generations: 8
+max_completion_length: 400
+temperature: 0.9
+top_p: 0.95
+beta: 0.02                    # ref(어댑터 원본) 대비 KL — trl이 어댑터 사본("ref")으로 처리
+lora_r: 16                    # 새 LoRA로 시작할 때만 사용 (SFT 어댑터 이어받기면 무시됨)
+save_steps: 25
+save_total_limit: 3
+
+# ── 보상 가중치 (rewards.py 함수 등록 순서와 일치, 8종) ─────
+reward_weights:
+  stance: 1.0                 # Judge 성향 점수 (LEFT: -S, RIGHT: +S)
+  rebuttal: 0.7               # Judge 반박 품질 (pairwise BT 또는 절대점수)
+  engagement: 0.5             # 상대 핵심 키워드 언급 비율 (judge-free 대조 신호)
+  persona: 0.5                # 페르소나 정합도 (prompt-to-line, arXiv:2511.00222)
+  antirep: 1.0                # 자기 반복 자카드 패널티
+  semantic_echo: 0.7          # 의미적 반복/동조 임베딩 패널티
+  neutral_phrase: 1.0         # 중립 표현 블랙리스트 패널티
+  format: 0.5                 # 길이·미종결·목록 형식 패널티
+
+# ── 자기 반복 패널티 파라미터 ───────────────────────────────
+antirep_tau: 0.25             # 허용 자카드 유사도 임계값
+antirep_gamma: 1.5            # 패널티 강도

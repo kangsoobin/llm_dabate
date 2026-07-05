@@ -77,6 +77,16 @@ class BaseAgent:
         지정 GPU에 모델과 토크나이저를 로드한다.
         4-bit의 경우 NF4 + double quantization + bfloat16 compute를 사용.
         """
+        # Kanana(DeepseekV3ForCausalLM) 등 MoE 계열 모델을 로드할 때만 동작하는 안전장치.
+        # transformers>=5.0이면 명확한 에러로 즉시 중단(뒤늦은 OOM 방지)하고, 4.x면 MoE forward의
+        # dtype 버그를 런타임 패치한다. Qwen 등 비-MoE 모델에는 영향 없음 (rl/model_utils.py 참고).
+        try:
+            from rl.model_utils import assert_transformers_version, patch_deepseek_v3_moe_dtype_bug
+            assert_transformers_version()
+            patch_deepseek_v3_moe_dtype_bug()
+        except ImportError:
+            pass  # rl/ 모듈이 없는 배포 환경 등 — 이 안전장치 없이도 Qwen 등은 정상 동작
+
         # ── 양자화 설정 ──────────────────────────────────────
         if self.quantization == "4bit":
             bnb_config = BitsAndBytesConfig(

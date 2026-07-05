@@ -33,6 +33,18 @@ python check_server.py
 bash install_env.sh
 ```
 
+**GRPO RL pipeline (Kanana + SFT-adapter continuation; won't fit on this machine's 24GB GPUs — run on a bigger server):**
+```bash
+# 사전 조건: transformers==4.57.6 (5.x는 Kanana MoE 로드 불가 — rl/model_utils.py가 가드)
+python rl/build_prompts.py                 # offline mini-debates → rl/data/*_prompts.jsonl
+python rl/train_grpo.py --side left        # GPU 배치는 rl/config.yaml left_gpus/right_gpus/judge_gpu
+python rl/train_grpo.py --side right
+python rl/eval_grpo.py --side left --adapter adapters/left_grpo
+```
+Rewards (rl/rewards.py, 8종): stance/rebuttal (judge; rebuttal은 pairwise Bradley-Terry 기본) +
+engagement/persona/antirep/semantic_echo/neutral_phrase/format (규칙·임베딩, judge-free).
+Judge 불확실성 라우팅(API 재채점)은 rl/config.yaml `judge_routing.enabled`로 opt-in.
+
 ## Architecture Overview
 
 The system loads **Qwen2.5-14B-Instruct** twice (4-bit NF4 quantization), pinning one instance per GPU. Two personas debate policy topics with the user acting as moderator.
