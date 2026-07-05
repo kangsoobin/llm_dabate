@@ -36,15 +36,12 @@
 SFT 이후에도 남는 중립 회귀·반박 품질·자기 반복 문제를 보상으로 직접 최적화.
 상세 설계와 변경 이력은 `rl/PLAN.md` 참고.
 
-### 3-1. 초기 구축 (2026-07-02, Qwen2.5-14B 기준)
+**파이프라인**: `build_prompts.py` (오프라인 미니 토론 → 라운드별 프롬프트 슬라이싱) →
+`train_grpo.py` (trl GRPOTrainer 1.5.1, QLoRA) → `eval_grpo.py` (스탠스 곡선 / 중립 표현 / before-after).
+`judge.py`는 로컬 judge 모델이 stance(−1~+1)와 rebuttal(1~5)을 JSON 1회 호출로 배치 채점하고,
+`run_all.sh` (tmux 순차 실행) + `monitor_metrics.py` (메트릭 CSV·경고 감시)가 실행을 보조한다.
 
-- `build_prompts.py` (오프라인 미니 토론 → 라운드별 프롬프트 슬라이싱) →
-  `train_grpo.py` (trl GRPOTrainer 1.5.1, QLoRA) → `eval_grpo.py` (스탠스 곡선 / 중립 표현 / before-after)
-- `judge.py`: 로컬 Qwen2.5-7B-Instruct 4bit judge — stance(−1~+1)와 rebuttal(1~5)을 JSON 1회 호출로 배치 채점
-- `run_all.sh` (tmux 순차 실행) + `monitor_metrics.py` (메트릭 CSV·경고 감시)
-- 24GB에서 생성 배치 16이 OOM → `per_device_train_batch_size=1` (생성 배치 8)로 확정
-
-### 3-2. Kanana 전환 + 보상 고도화 (2026-07-04)
+### 3-1. 모델·보상 설계 (2026-07-04)
 
 - **베이스 모델 교체**: kakaocorp/**kanana-2-30b-a3b-instruct** (DeepseekV3 아키텍처, MLA+MoE).
   jaeeun 브랜치의 Kanana 기준 SFT LoRA 어댑터(LEFT loss 2.05→0.17, RIGHT 2.03→0.14)를 도입,
@@ -65,7 +62,7 @@ SFT 이후에도 남는 중립 회귀·반박 품질·자기 반복 문제를 �
   - judge 불확실성 라우팅(API 재채점, arXiv:2510.20369)은 `rl/config.yaml judge_routing.enabled`로 opt-in (기본 off)
   - 실검증: pairwise BT가 정면반박 1.00 > 논점회피 0.01 > 구호나열 0.00 판별, persona 정합 0.655 > 이탈 0.301
 
-### 3-3. GRPO 학습 완료 (2026-07-04, vast.ai RTX PRO 6000 96GB)
+### 3-2. GRPO 학습 완료 (2026-07-04, vast.ai RTX PRO 6000 96GB)
 
 - LEFT/RIGHT 각 **55스텝** 완료 (스텝당 ~200초, VRAM 피크 32GB, 정책+judge 동일 GPU)
 - 데이터: 50문항 트랜스크립트 → 사이드당 150 프롬프트 (Kanana 토크나이저, max 1,019토큰) → `rl/data_kanana/`
@@ -77,7 +74,7 @@ SFT 이후에도 남는 중립 회귀·반박 품질·자기 반복 문제를 �
 
 - **transformers==4.57.6 고정 필수**: 5.x는 Kanana MoE expert를 fused Parameter로 구현해
   bitsandbytes 4bit 양자화가 안 걸림 → bf16 그대로 83~94GB 로드되어 OOM.
-  `rl/model_utils.py`가 버전 가드. **로컬 conda 환경은 아직 5.9.0 — 다운그레이드 미적용**
+  `rl/model_utils.py`가 버전 가드
 - **이 서버(3090 24GB×2)로는 Kanana 학습 불가** — 실행은 대용량 GPU 서버에서.
   GPU 배치는 `rl/config.yaml`의 `left_gpus/right_gpus/judge_gpu`
 - `rl/data/*_prompts.jsonl`은 Qwen 토크나이저 산출물 — Kanana 기준 재생성 필요 (data_kanana가 최신)
